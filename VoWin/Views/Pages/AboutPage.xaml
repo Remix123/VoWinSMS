@@ -49,7 +49,7 @@
           Margin="0,0,0,16"
         >
           <Border.Effect>
-            <DropShadowEffect BlurRadius="10" Direction="270" Opacity="0.04" ShadowDepth="2" Color="#000000" />
+            <DropShadowEffect BlurRadius="10" Direction="270" Opacity="0.04" ShadowDepth="2" Color="{DynamicResource AppShadowColor}" />
           </Border.Effect>
           <Grid>
             <Grid.ColumnDefinitions>
@@ -70,7 +70,7 @@
               Margin="0,0,20,0"
             >
               <Border.Effect>
-                <DropShadowEffect BlurRadius="12" Direction="270" Opacity="0.10" ShadowDepth="3" Color="#000000" />
+                <DropShadowEffect BlurRadius="12" Direction="270" Opacity="0.10" ShadowDepth="3" Color="{DynamicResource AppShadowColor}" />
               </Border.Effect>
               <Image
                 Source="pack://application:,,,/Assets/vowin.png"
@@ -115,7 +115,7 @@
           Margin="0,0,0,16"
         >
           <Border.Effect>
-            <DropShadowEffect BlurRadius="10" Direction="270" Opacity="0.04" ShadowDepth="2" Color="#000000" />
+            <DropShadowEffect BlurRadius="10" Direction="270" Opacity="0.04" ShadowDepth="2" Color="{DynamicResource AppShadowColor}" />
           </Border.Effect>
           <StackPanel>
             <Grid Margin="0,0,0,12">
@@ -236,7 +236,7 @@
           Margin="0,0,0,16"
         >
           <Border.Effect>
-            <DropShadowEffect BlurRadius="10" Direction="270" Opacity="0.04" ShadowDepth="2" Color="#000000" />
+            <DropShadowEffect BlurRadius="10" Direction="270" Opacity="0.04" ShadowDepth="2" Color="{DynamicResource AppShadowColor}" />
           </Border.Effect>
           <StackPanel>
             <!-- Card Header -->
@@ -298,8 +298,8 @@
                       <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                      <Border Width="22" Height="22" CornerRadius="11" Background="{DynamicResource AppSuccessSoftBrush}" BorderBrush="#26A17B" BorderThickness="1" Margin="0,0,6,0" VerticalAlignment="Center">
-                        <TextBlock Text="₮" FontSize="12" FontWeight="Bold" Foreground="#26A17B" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,-1,0,0" />
+                      <Border Width="22" Height="22" CornerRadius="11" Background="{DynamicResource AppSuccessSoftBrush}" BorderBrush="{DynamicResource AppSuccessBrush}" BorderThickness="1" Margin="0,0,6,0" VerticalAlignment="Center">
+                        <TextBlock Text="₮" FontSize="12" FontWeight="Bold" Foreground="{DynamicResource AppSuccessBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,-1,0,0" />
                       </Border>
                       <TextBlock Text="USDT-TRON" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource AppTextPrimaryBrush}" VerticalAlignment="Center" />
                     </StackPanel>
@@ -310,7 +310,7 @@
 
                   <!-- QR Code Container -->
                   <Border
-                    Background="#FFFFFF"
+                    Background="{DynamicResource AppQrSurfaceBrush}"
                     BorderBrush="{DynamicResource AppCardBorderBrush}"
                     BorderThickness="1"
                     CornerRadius="10"
@@ -320,7 +320,7 @@
                     HorizontalAlignment="Center"
                   >
                     <Border.Effect>
-                      <DropShadowEffect BlurRadius="8" Direction="270" Opacity="0.06" ShadowDepth="2" Color="#000000" />
+                      <DropShadowEffect BlurRadius="8" Direction="270" Opacity="0.06" ShadowDepth="2" Color="{DynamicResource AppShadowColor}" />
                     </Border.Effect>
                     <Image
                       Source="{Binding TronQrCode}"
@@ -411,8 +411,8 @@
                       <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                      <Border Width="22" Height="22" CornerRadius="11" Background="{DynamicResource AppSuccessSoftBrush}" BorderBrush="#26A17B" BorderThickness="1" Margin="0,0,6,0" VerticalAlignment="Center">
-                        <TextBlock Text="₮" FontSize="12" FontWeight="Bold" Foreground="#26A17B" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,-1,0,0" />
+                      <Border Width="22" Height="22" CornerRadius="11" Background="{DynamicResource AppSuccessSoftBrush}" BorderBrush="{DynamicResource AppSuccessBrush}" BorderThickness="1" Margin="0,0,6,0" VerticalAlignment="Center">
+                        <TextBlock Text="₮" FontSize="12" FontWeight="Bold" Foreground="{DynamicResource AppSuccessBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,-1,0,0" />
                       </Border>
                       <TextBlock Text="USDT-BSC" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource AppTextPrimaryBrush}" VerticalAlignment="Center" />
                     </StackPanel>
@@ -423,7 +423,7 @@
 
                   <!-- QR Code Container -->
                   <Border
-                    Background="#FFFFFF"
+                    Background="{DynamicResource AppQrSurfaceBrush}"
                     BorderBrush="{DynamicResource AppCardBorderBrush}"
                     BorderThickness="1"
                     CornerRadius="10"
@@ -433,7 +433,7 @@
                     HorizontalAlignment="Center"
                   >
                     <Border.Effect>
-                      <DropShadowEffect BlurRadius="8" Direction="270" Opacity="0.06" ShadowDepth="2" Color="#000000" />
+                      <DropShadowEffect BlurRadius="8" Direction="270" Opacity="0.06" ShadowDepth="2" Color="{DynamicResource AppShadowColor}" />
                     </Border.Effect>
                     <Image
                       Source="{Binding BscQrCode}"
@@ -524,8 +524,8 @@
                       <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                      <Border Width="22" Height="22" CornerRadius="11" Background="{DynamicResource AppSuccessSoftBrush}" BorderBrush="#26A17B" BorderThickness="1" Margin="0,0,6,0" VerticalAlignment="Center">
-                        <TextBlock Text="₮" FontSize="12" FontWeight="Bold" Foreground="#26A17B" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,-1,0,0" />
+                      <Border Width="22" Height="22" CornerRadius="11" Background="{DynamicResource AppSuccessSoftBrush}" BorderBrush="{DynamicResource AppSuccessBrush}" BorderThickness="1" Margin="0,0,6,0" VerticalAlignment="Center">
+                        <TextBlock Text="₮" FontSize="12" FontWeight="Bold" Foreground="{DynamicResource AppSuccessBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,-1,0,0" />
                       </Border>
                       <TextBlock Text="USDT-Polygon" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource AppTextPrimaryBrush}" VerticalAlignment="Center" />
                     </StackPanel>
@@ -536,7 +536,7 @@
 
                   <!-- QR Code Container -->
                   <Border
-                    Background="#FFFFFF"
+                    Background="{DynamicResource AppQrSurfaceBrush}"
                     BorderBrush="{DynamicResource AppCardBorderBrush}"
                     BorderThickness="1"
                     CornerRadius="10"
@@ -546,7 +546,7 @@
                     HorizontalAlignment="Center"
                   >
                     <Border.Effect>
-                      <DropShadowEffect BlurRadius="8" Direction="270" Opacity="0.06" ShadowDepth="2" Color="#000000" />
+                      <DropShadowEffect BlurRadius="8" Direction="270" Opacity="0.06" ShadowDepth="2" Color="{DynamicResource AppShadowColor}" />
                     </Border.Effect>
                     <Image
                       Source="{Binding PolygonQrCode}"
@@ -652,7 +652,7 @@
           Margin="0,0,0,16"
         >
           <Border.Effect>
-            <DropShadowEffect BlurRadius="10" Direction="270" Opacity="0.04" ShadowDepth="2" Color="#000000" />
+            <DropShadowEffect BlurRadius="10" Direction="270" Opacity="0.04" ShadowDepth="2" Color="{DynamicResource AppShadowColor}" />
           </Border.Effect>
           <StackPanel>
             <Grid Margin="0,0,0,10">

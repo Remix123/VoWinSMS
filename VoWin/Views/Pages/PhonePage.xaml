@@ -90,7 +90,7 @@
               </Trigger>
               <Trigger Property="IsPressed" Value="True">
                 <Setter TargetName="border" Property="Background" Value="{DynamicResource AppAccentBrush}" />
-                <Setter Property="Foreground" Value="White" />
+                <Setter Property="Foreground" Value="{DynamicResource AppTextOnAccentBrush}" />
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -326,12 +326,12 @@
                         CornerRadius="24"
                       >
                         <Border.Effect>
-                          <DropShadowEffect BlurRadius="12" ShadowDepth="3" Opacity="0.25" Color="#16A34A" />
+                          <DropShadowEffect BlurRadius="12" ShadowDepth="3" Opacity="0.25" Color="{DynamicResource AppSuccessShadowColor}" />
                         </Border.Effect>
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
                           <ui:SymbolIcon
                             FontSize="22"
-                            Foreground="White"
+                            Foreground="{DynamicResource AppTextOnAccentBrush}"
                             Symbol="Call24"
                             Margin="0,0,8,0"
                             VerticalAlignment="Center"
@@ -340,7 +340,7 @@
                             Text="呼叫"
                             FontSize="16"
                             FontWeight="SemiBold"
-                            Foreground="White"
+                            Foreground="{DynamicResource AppTextOnAccentBrush}"
                             VerticalAlignment="Center"
                           />
                         </StackPanel>
@@ -416,7 +416,7 @@
                 Margin="0,0,0,18"
               >
                 <Border.Effect>
-                  <DropShadowEffect BlurRadius="16" ShadowDepth="4" Opacity="0.10" Color="#000000" />
+                  <DropShadowEffect BlurRadius="16" ShadowDepth="4" Opacity="0.10" Color="{DynamicResource AppShadowColor}" />
                 </Border.Effect>
                 <ui:SymbolIcon
                   FontSize="50"
@@ -608,7 +608,7 @@
                   Margin="0,6,0,6"
                 >
                   <Border.Effect>
-                    <DropShadowEffect BlurRadius="8" Direction="270" Opacity="0.04" ShadowDepth="2" Color="#000000" />
+                    <DropShadowEffect BlurRadius="8" Direction="270" Opacity="0.04" ShadowDepth="2" Color="{DynamicResource AppShadowColor}" />
                   </Border.Effect>
                   <Grid>
                     <Grid.ColumnDefinitions>
@@ -718,12 +718,12 @@
                       CornerRadius="24"
                     >
                       <Border.Effect>
-                        <DropShadowEffect BlurRadius="12" ShadowDepth="3" Opacity="0.25" Color="#DC2626" />
+                        <DropShadowEffect BlurRadius="12" ShadowDepth="3" Opacity="0.25" Color="{DynamicResource AppDangerShadowColor}" />
                       </Border.Effect>
                       <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
                         <ui:SymbolIcon
                           FontSize="22"
-                          Foreground="White"
+                          Foreground="{DynamicResource AppTextOnAccentBrush}"
                           Symbol="CallDismiss24"
                           Margin="0,0,8,0"
                           VerticalAlignment="Center"
@@ -732,7 +732,7 @@
                           Text="挂断"
                           FontSize="16"
                           FontWeight="SemiBold"
-                          Foreground="White"
+                          Foreground="{DynamicResource AppTextOnAccentBrush}"
                           VerticalAlignment="Center"
                         />
                       </StackPanel>
@@ -770,7 +770,7 @@
               Visibility="{Binding ShowInCallKeypad, Converter={StaticResource BoolToVis}}"
             >
               <Border.Effect>
-                <DropShadowEffect BlurRadius="24" ShadowDepth="6" Opacity="0.20" Color="#000000" />
+                <DropShadowEffect BlurRadius="24" ShadowDepth="6" Opacity="0.20" Color="{DynamicResource AppShadowColor}" />
               </Border.Effect>
               <StackPanel>
                 <!-- Keypad Header with Close button -->
@@ -956,6 +956,7 @@
                   <Setter Property="Padding" Value="0"/>
                   <Setter Property="Margin" Value="0,0,0,8"/>
                   <Setter Property="Background" Value="Transparent"/>
+                  <Setter Property="Foreground" Value="{DynamicResource AppTextPrimaryBrush}" />
                   <Setter Property="Template">
                     <Setter.Value>
                       <ControlTemplate TargetType="ListViewItem">
@@ -966,7 +967,7 @@
                           CornerRadius="12"
                           Padding="16,12"
                         >
-                          <ContentPresenter/>
+                          <ContentPresenter TextElement.Foreground="{TemplateBinding Foreground}" />
                         </Border>
                       </ControlTemplate>
                     </Setter.Value>
@@ -976,7 +977,7 @@
 
               <ListView.ItemTemplate>
                 <DataTemplate>
-                  <Grid>
+                  <Grid TextElement.Foreground="{DynamicResource AppTextPrimaryBrush}">
                     <Grid.ColumnDefinitions>
                       <ColumnDefinition Width="Auto" />
                       <ColumnDefinition Width="*" />
@@ -1004,6 +1005,7 @@
                       <TextBlock
                         FontSize="15"
                         FontWeight="SemiBold"
+                        Foreground="{DynamicResource AppTextPrimaryBrush}"
                         Text="{Binding PhoneNumber}"
                         Margin="0,0,0,3"
                       />

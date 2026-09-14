@@ -38,7 +38,7 @@
 
       <StackPanel Grid.Column="0" VerticalAlignment="Center">
         <TextBlock Style="{DynamicResource AppPageTitleStyle}" Text="代理分流" />
-        <TextBlock Style="{DynamicResource AppPageSubtitleStyle}" Text="按国家、号码与节点状态智能选择网络路径" />
+        <TextBlock Style="{DynamicResource AppPageSubtitleStyle}" Text="ICCID 卡规则优先；未配置时按 IMSI MCC/PLMN 选择国家出口" />
       </StackPanel>
 
       <ui:Button
@@ -62,7 +62,7 @@
       CornerRadius="8"
     >
       <Border.Effect>
-        <DropShadowEffect BlurRadius="8" Direction="270" Opacity="0.04" ShadowDepth="1" Color="#000000" />
+        <DropShadowEffect BlurRadius="8" Direction="270" Opacity="0.04" ShadowDepth="1" Color="{DynamicResource AppShadowColor}" />
       </Border.Effect>
       <Grid>
         <Grid.ColumnDefinitions>
@@ -78,9 +78,130 @@
 
     <!-- Main Content TabControl -->
     <TabControl Grid.Row="2" Background="Transparent" BorderThickness="0">
+
+      <!-- TAB 1: Per-card ICCID rules (highest priority) -->
+      <TabItem Header="SIM 卡规则（ICCID 优先）">
+        <Grid Margin="0,12,0,0">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+          </Grid.RowDefinitions>
+
+          <Border Grid.Row="0" Margin="0,0,0,12" Padding="16,14" Background="{DynamicResource AppCardBrush}" BorderBrush="{DynamicResource AppCardBorderBrush}" BorderThickness="1" CornerRadius="12">
+            <Grid>
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+              </Grid.RowDefinitions>
+              <Grid Grid.Row="0" Margin="0,0,0,10">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Orientation="Horizontal">
+                  <ui:SymbolIcon Symbol="Sim24" FontSize="18" Foreground="{DynamicResource AppAccentBrush}" Margin="0,0,8,0" />
+                  <TextBlock FontSize="14" FontWeight="SemiBold" Text="为当前 SIM 设置最高优先级出口" />
+                </StackPanel>
+                <TextBlock Grid.Column="1" FontSize="11" Foreground="{DynamicResource AppTextTertiaryBrush}" Text="ICCID ＞ IMSI MCC/PLMN ＞ 直连" />
+              </Grid>
+
+              <Grid Grid.Row="1">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="2*" MinWidth="220" />
+                  <ColumnDefinition Width="2*" MinWidth="220" />
+                  <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <ComboBox
+                  Grid.Column="0"
+                  Margin="0,0,10,0"
+                  ItemsSource="{Binding IccidCardOptions}"
+                  SelectedItem="{Binding SelectedIccidCard, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                  Padding="10,5"
+                  MaxDropDownHeight="360"
+                  ScrollViewer.VerticalScrollBarVisibility="Auto"
+                >
+                  <ComboBox.ItemTemplate>
+                    <DataTemplate>
+                      <StackPanel Margin="0,2">
+                        <TextBlock FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource AppTextPrimaryBrush}" Text="{Binding CardAndNumberDisplay, Mode=OneWay}" />
+                        <TextBlock FontSize="10" FontFamily="Consolas" Foreground="{DynamicResource AppTextTertiaryBrush}" Margin="0,2,0,0" Text="{Binding IdentityDisplay, Mode=OneWay}" />
+                        <TextBlock FontSize="10" Foreground="{DynamicResource AppTextSecondaryBrush}" Margin="0,1,0,0" Text="{Binding NetworkDisplay, Mode=OneWay}" TextTrimming="CharacterEllipsis" />
+                      </StackPanel>
+                    </DataTemplate>
+                  </ComboBox.ItemTemplate>
+                </ComboBox>
+                <ComboBox Grid.Column="1" Margin="0,0,10,0" ItemsSource="{Binding AvailableEgressOptions}" SelectedItem="{Binding SelectedIccidEgress, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" DisplayMemberPath="DisplayName" Padding="10,7" />
+                <ui:Button Grid.Column="2" Appearance="Primary" Padding="18,8" Command="{Binding SaveIccidRuleCommand}" Icon="{ui:SymbolIcon Symbol=Save24}" Content="保存 / 更新规则" />
+              </Grid>
+
+              <StackPanel Grid.Row="2" Margin="2,8,0,0">
+                <TextBlock FontSize="11" Foreground="{DynamicResource AppAccentBrush}" Text="{Binding SelectedIccidText, Mode=OneWay}" />
+                <TextBlock FontSize="10" Foreground="{DynamicResource AppTextTertiaryBrush}" Margin="0,2,0,0" Text="{Binding SelectedIccidImsiText, Mode=OneWay}" />
+              </StackPanel>
+            </Grid>
+          </Border>
+
+          <Border Grid.Row="1" Padding="16" Background="{DynamicResource AppCardBrush}" BorderBrush="{DynamicResource AppCardBorderBrush}" BorderThickness="1" CornerRadius="12">
+            <Grid>
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+              </Grid.RowDefinitions>
+              <Grid Grid.Row="0" Margin="0,0,0,12">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" FontSize="14" FontWeight="SemiBold" Text="已保存的 ICCID 卡规则" />
+                <Border Grid.Column="1" Padding="8,3" Background="{DynamicResource AppInputBrush}" CornerRadius="4">
+                  <TextBlock FontSize="11" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="{Binding IccidRulesSummaryText, Mode=OneWay}" />
+                </Border>
+              </Grid>
+
+              <ListView Grid.Row="1" ItemsSource="{Binding IccidRoutes}" SelectedItem="{Binding SelectedIccidRoute, Mode=TwoWay}" BorderThickness="0" Background="Transparent" ScrollViewer.CanContentScroll="True" VirtualizingPanel.IsVirtualizing="True">
+                <ListView.ItemContainerStyle>
+                  <Style TargetType="ListViewItem">
+                    <Setter Property="Padding" Value="0" />
+                    <Setter Property="Margin" Value="0,0,0,6" />
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                  </Style>
+                </ListView.ItemContainerStyle>
+                <ListView.ItemTemplate>
+                  <DataTemplate>
+                    <Border Padding="12,10" Background="{DynamicResource AppInputBrush}" BorderBrush="{DynamicResource AppCardBorderBrush}" BorderThickness="1" CornerRadius="8">
+                      <Grid>
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="*" />
+                          <ColumnDefinition Width="Auto" />
+                          <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                          <StackPanel Orientation="Horizontal">
+                            <TextBlock FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource AppTextPrimaryBrush}" Text="{Binding DisplayName, Mode=OneWay}" />
+                            <Border Margin="8,0,0,0" Padding="6,1" Background="{DynamicResource AppCardBrush}" CornerRadius="4">
+                              <TextBlock FontSize="10" FontFamily="Consolas" Foreground="{DynamicResource AppAccentBrush}" Text="{Binding Iccid, Mode=OneWay}" />
+                            </Border>
+                          </StackPanel>
+                          <TextBlock Margin="0,3,0,0" FontSize="10" Foreground="{DynamicResource AppTextTertiaryBrush}" Text="{Binding ImsiDisplay, Mode=OneWay}" />
+                          <TextBlock Margin="0,2,0,0" FontSize="10" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="{Binding PhoneDisplay, Mode=OneWay}" />
+                        </StackPanel>
+                        <Border Grid.Column="1" Margin="12,0" Padding="10,4" Background="{DynamicResource AppCardBrush}" CornerRadius="6" VerticalAlignment="Center">
+                          <TextBlock FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="{Binding ProxyNodeName, Mode=OneWay}" />
+                        </Border>
+                        <ui:Button Grid.Column="2" Appearance="Transparent" Padding="6,5" Foreground="{DynamicResource AppDangerBrush}" Command="{Binding DataContext.DeleteIccidRuleCommand, RelativeSource={RelativeSource AncestorType=ListView}}" CommandParameter="{Binding}" Icon="{ui:SymbolIcon Symbol=Delete24}" ToolTip="删除后改为跟随 IMSI MCC/PLMN" />
+                      </Grid>
+                    </Border>
+                  </DataTemplate>
+                </ListView.ItemTemplate>
+              </ListView>
+            </Grid>
+          </Border>
+        </Grid>
+      </TabItem>
       
-      <!-- TAB 1: 国家分流规则 (Country Dispatch) -->
-      <TabItem Header="国家分流规则">
+      <!-- TAB 2: IMSI MCC/PLMN fallback rules -->
+      <TabItem Header="PLMN 国家规则（次级）">
         <Grid Margin="0,12,0,0">
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -98,7 +219,7 @@
             Padding="16,14"
           >
             <Border.Effect>
-              <DropShadowEffect BlurRadius="10" Direction="270" Opacity="0.04" ShadowDepth="2" Color="#000000" />
+              <DropShadowEffect BlurRadius="10" Direction="270" Opacity="0.04" ShadowDepth="2" Color="{DynamicResource AppShadowColor}" />
             </Border.Effect>
             <Grid>
               <Grid.RowDefinitions>
@@ -204,7 +325,7 @@
             Padding="16"
           >
             <Border.Effect>
-              <DropShadowEffect BlurRadius="10" Direction="270" Opacity="0.04" ShadowDepth="2" Color="#000000" />
+              <DropShadowEffect BlurRadius="10" Direction="270" Opacity="0.04" ShadowDepth="2" Color="{DynamicResource AppShadowColor}" />
             </Border.Effect>
             <Grid>
               <Grid.RowDefinitions>
@@ -277,7 +398,7 @@
                             Padding="12,10"
                           >
                             <Border.Effect>
-                              <DropShadowEffect BlurRadius="4" Direction="270" Opacity="0.03" ShadowDepth="1" Color="#000000" />
+                              <DropShadowEffect BlurRadius="4" Direction="270" Opacity="0.03" ShadowDepth="1" Color="{DynamicResource AppShadowColor}" />
                             </Border.Effect>
                             <ContentPresenter />
                           </Border>
@@ -410,7 +531,7 @@
             Padding="14"
           >
             <Border.Effect>
-              <DropShadowEffect BlurRadius="10" Direction="270" Opacity="0.04" ShadowDepth="2" Color="#000000" />
+              <DropShadowEffect BlurRadius="10" Direction="270" Opacity="0.04" ShadowDepth="2" Color="{DynamicResource AppShadowColor}" />
             </Border.Effect>
             <Grid>
               <Grid.RowDefinitions>
@@ -424,7 +545,7 @@
                   <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
 
-                <TextBlock Grid.Column="0" FontWeight="SemiBold" FontSize="14" Foreground="{DynamicResource AppTextPrimaryBrush}" VerticalAlignment="Center" Text="已登记的 SOCKS5 / HTTP 代理节点" />
+                <TextBlock Grid.Column="0" FontWeight="SemiBold" FontSize="14" Foreground="{DynamicResource AppTextPrimaryBrush}" VerticalAlignment="Center" Text="已登记的 SOCKS5 代理节点" />
                 <Border Grid.Column="1" Background="{DynamicResource ControlFillColorDefaultBrush}" BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}" BorderThickness="1" Padding="8,3" CornerRadius="4" VerticalAlignment="Center">
                   <TextBlock FontSize="11" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="{Binding NodePoolSummaryText}" />
                 </Border>
@@ -458,7 +579,7 @@
                             Padding="12,10"
                           >
                             <Border.Effect>
-                              <DropShadowEffect BlurRadius="4" Direction="270" Opacity="0.03" ShadowDepth="1" Color="#000000" />
+                              <DropShadowEffect BlurRadius="4" Direction="270" Opacity="0.03" ShadowDepth="1" Color="{DynamicResource AppShadowColor}" />
                             </Border.Effect>
                             <ContentPresenter />
                           </Border>
@@ -547,7 +668,7 @@
               Margin="0,0,0,14"
             >
               <Border.Effect>
-                <DropShadowEffect BlurRadius="10" Direction="270" Opacity="0.04" ShadowDepth="2" Color="#000000" />
+                <DropShadowEffect BlurRadius="10" Direction="270" Opacity="0.04" ShadowDepth="2" Color="{DynamicResource AppShadowColor}" />
               </Border.Effect>
               <StackPanel>
                 <TextBlock FontWeight="SemiBold" FontSize="14" Foreground="{DynamicResource AppTextPrimaryBrush}" Text="➕ 添加代理节点" Margin="0,0,0,8" />
@@ -622,7 +743,7 @@
               </StackPanel>
             </Border>
 
-            <!-- Slot Binding Quick Card -->
+            <!-- Routing priority explanation -->
             <Border
               Background="{DynamicResource AppCardBrush}"
               BorderBrush="{DynamicResource AppCardBorderBrush}"
@@ -631,45 +752,14 @@
               Padding="16"
             >
               <Border.Effect>
-                <DropShadowEffect BlurRadius="10" Direction="270" Opacity="0.04" ShadowDepth="2" Color="#000000" />
+                <DropShadowEffect BlurRadius="10" Direction="270" Opacity="0.04" ShadowDepth="2" Color="{DynamicResource AppShadowColor}" />
               </Border.Effect>
               <StackPanel>
-                <TextBlock FontWeight="SemiBold" FontSize="14" Foreground="{DynamicResource AppTextPrimaryBrush}" Text="卡槽全局代理绑定" Margin="0,0,0,4" />
-                <TextBlock FontSize="12" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="将代理直接绑定到指定硬件 SIM 卡槽：" Margin="0,0,0,10" TextWrapping="Wrap" />
-
-                <ComboBox
-                  ItemsSource="{Binding Slots}"
-                  SelectedItem="{Binding SelectedSlot, Mode=TwoWay}"
-                  DisplayMemberPath="DisplayTitle"
-                  Margin="0,0,0,10"
-                  HorizontalAlignment="Stretch"
-                />
-
-                <Grid>
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="8" />
-                    <ColumnDefinition Width="*" />
-                  </Grid.ColumnDefinitions>
-                  <ui:Button
-                    Grid.Column="0"
-                    Appearance="Secondary"
-                    Command="{Binding ApplyPresetToSlotCommand}"
-                    CommandParameter="{Binding SelectedPreset}"
-                    Content="应用选中节点"
-                    HorizontalAlignment="Stretch"
-                    FontSize="12"
-                  />
-                  <ui:Button
-                    Grid.Column="2"
-                    Appearance="Secondary"
-                    Command="{Binding ClearSlotProxyCommand}"
-                    CommandParameter="{Binding SelectedSlot}"
-                    Content="恢复卡槽直连"
-                    HorizontalAlignment="Stretch"
-                    FontSize="12"
-                  />
-                </Grid>
+                <TextBlock FontWeight="SemiBold" FontSize="14" Foreground="{DynamicResource AppTextPrimaryBrush}" Text="分流优先级" Margin="0,0,0,8" />
+                <TextBlock FontSize="12" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="1. ICCID 卡规则（最高）" Margin="0,0,0,4" />
+                <TextBlock FontSize="12" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="2. IMSI MCC/PLMN 国家规则" Margin="0,0,0,4" />
+                <TextBlock FontSize="12" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="3. 未命中时直连 UDP" Margin="0,0,0,8" />
+                <TextBlock FontSize="11" Foreground="{DynamicResource AppTextTertiaryBrush}" Text="硬件卡槽不再保存独立代理，换卡后不会继承上一张卡的出口。" TextWrapping="Wrap" />
               </StackPanel>
             </Border>
           </StackPanel>
@@ -702,7 +792,7 @@
         Padding="24,20"
       >
         <Border.Effect>
-          <DropShadowEffect BlurRadius="32" Direction="270" Opacity="0.30" ShadowDepth="8" Color="#000000" />
+          <DropShadowEffect BlurRadius="32" Direction="270" Opacity="0.30" ShadowDepth="8" Color="{DynamicResource AppShadowColor}" />
         </Border.Effect>
 
         <Grid>
@@ -801,7 +891,7 @@
               >
                 <StackPanel Margin="6,0,0,0">
                   <TextBlock Text="代理节点 (Proxy)" FontWeight="SemiBold" FontSize="13" Foreground="{DynamicResource AppTextPrimaryBrush}" />
-                  <TextBlock Text="经由指定 SOCKS5 / HTTP 代理隧道转发流量" FontSize="11" Foreground="{DynamicResource AppTextSecondaryBrush}" Margin="0,2,0,0" />
+                  <TextBlock Text="经由指定 SOCKS5 代理隧道转发 UDP 流量" FontSize="11" Foreground="{DynamicResource AppTextSecondaryBrush}" Margin="0,2,0,0" />
                 </StackPanel>
               </RadioButton>
             </Border>

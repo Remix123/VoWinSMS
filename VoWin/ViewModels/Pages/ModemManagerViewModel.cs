@@ -88,6 +88,18 @@ namespace VoWin.ViewModels.Pages
         private string _euiccEid = "未知 / 未检测到 eUICC";
 
         [ObservableProperty]
+        private EuiccCapability _euiccCapability = EuiccCapability.Unknown;
+
+        [ObservableProperty]
+        private string _euiccSupportMessage = "将在启动时自动检测 eUICC 芯片。";
+
+        [ObservableProperty]
+        private bool _isEuiccProbing;
+
+        public bool IsEuiccSupported => EuiccCapability == EuiccCapability.Supported;
+        public bool IsEuiccUnsupported => EuiccCapability == EuiccCapability.Unsupported;
+
+        [ObservableProperty]
         private ObservableCollection<Profile> _euiccProfiles = new();
 
         [ObservableProperty]
@@ -135,11 +147,19 @@ namespace VoWin.ViewModels.Pages
         public ObservableCollection<string> EuiccDownloadLog { get; } = new();
 
         private CancellationTokenSource? _euiccDownloadCts;
+        private int _euiccProbeCount;
         private readonly HashSet<string> _blockedEuiccActivationFingerprints = new(StringComparer.Ordinal);
         private string _lastEuiccProgressEntry = string.Empty;
 
         partial void OnEuiccActivationCodeChanged(string value) => DownloadEuiccProfileCommand.NotifyCanExecuteChanged();
         partial void OnAllowUncertainEuiccRetryChanged(bool value) => DownloadEuiccProfileCommand.NotifyCanExecuteChanged();
+
+        partial void OnEuiccCapabilityChanged(EuiccCapability value)
+        {
+            OnPropertyChanged(nameof(IsEuiccSupported));
+            OnPropertyChanged(nameof(IsEuiccUnsupported));
+            DownloadEuiccProfileCommand.NotifyCanExecuteChanged();
+        }
 
         partial void OnIsEuiccDownloadingChanged(bool value)
         {
@@ -452,7 +472,28 @@ namespace VoWin.ViewModels.Pages
             RefreshSummaryProperties();
             if (value != null)
             {
+                EuiccProfiles.Clear();
+                SelectedProfile = null;
+                EuiccEid = "正在检测 eUICC 芯片…";
+                EuiccCapability = value.EuiccCapability;
+                EuiccSupportMessage = value.EuiccCapabilityMessage;
                 _ = LoadPreferencesForSlotAsync(value);
+                if (value.LastEuiccProbe is { } cachedProbe)
+                {
+                    ApplyEuiccProbeResult(cachedProbe);
+                }
+                else
+                {
+                    _ = LoadEuiccDataForSlotAsync(value, userInitiated: false);
+                }
+            }
+            else
+            {
+                EuiccProfiles.Clear();
+                SelectedProfile = null;
+                EuiccEid = "未选择卡槽";
+                EuiccCapability = EuiccCapability.Unknown;
+                EuiccSupportMessage = "请先选择一个已就绪的卡槽。";
             }
         }
 
@@ -780,62 +821,84 @@ namespace VoWin.ViewModels.Pages
         }
 
         [RelayCommand]
-        private async Task LoadEuiccDataAsync()
+        private Task LoadEuiccDataAsync()
         {
-            if (IsBusy) return;
-            if (SelectedSlot == null)
+            var slot = SelectedSlot;
+            if (slot == null)
             {
                 StatusMessage = "请先选择一个设备。";
-                return;
+                return Task.CompletedTask;
             }
 
-            IsBusy = true;
-            StatusMessage = $"正在读取 [{SelectedSlot.Name}] 的 eUICC / eSIM 芯片信息...";
-            bool eidLoaded = false;
-            try
+            return LoadEuiccDataForSlotAsync(slot, userInitiated: true);
+        }
+
+        private async Task LoadEuiccDataForSlotAsync(ModemSlot slot, bool userInitiated)
+        {
+            Interlocked.Increment(ref _euiccProbeCount);
+            IsEuiccProbing = true;
+
+            var isCurrentSlot = ReferenceEquals(SelectedSlot, slot);
+            if (isCurrentSlot)
             {
-                var eid = await _kernelService.GetEuiccEidAsync(SelectedSlot.Id);
-                if (!string.IsNullOrWhiteSpace(eid))
+                EuiccCapability = EuiccCapability.Probing;
+                EuiccSupportMessage = "正在读取 eUICC 芯片…";
+                EuiccEid = "正在读取…";
+                if (userInitiated)
                 {
-                    EuiccEid = eid;
-                    eidLoaded = true;
+                    StatusMessage = $"正在读取 [{slot.Name}] 的 eUICC / eSIM 芯片信息…";
                 }
-            }
-            catch
-            {
-                EuiccEid = "正在读取 Profiles...";
             }
 
             try
             {
-                var profiles = await _kernelService.GetEuiccProfilesAsync(SelectedSlot.Id);
-                EuiccProfiles.Clear();
-                foreach (var p in profiles)
-                {
-                    EuiccProfiles.Add(p);
-                }
-                StatusMessage = $"eUICC 读取完成，共 {profiles.Count} 个 Profile。";
-                if (!eidLoaded && profiles.Count > 0)
-                {
-                    EuiccEid = "已成功识别 eUICC 卡";
-                }
+                var result = await _kernelService.ProbeEuiccAsync(slot.Id);
+                if (!ReferenceEquals(SelectedSlot, slot)) return;
+                ApplyEuiccProbeResult(result);
             }
             catch (Exception ex)
             {
-                if (!eidLoaded)
-                {
-                    StatusMessage = $"读取 eUICC 失败: {ex.Message}";
-                    EuiccEid = "读取失败 / 未检测到 eUICC 应用";
-                }
-                else
-                {
-                    StatusMessage = $"已读取 EID，但 Profile 列表读取受限: {ex.Message}";
-                }
+                if (!ReferenceEquals(SelectedSlot, slot)) return;
+                EuiccCapability = EuiccCapability.Error;
+                EuiccSupportMessage = $"eUICC 检测失败：{ex.Message}";
+                EuiccEid = "未读取到 EID";
+                EuiccProfiles.Clear();
+                StatusMessage = EuiccSupportMessage;
             }
             finally
             {
-                IsBusy = false;
+                if (Interlocked.Decrement(ref _euiccProbeCount) == 0)
+                {
+                    IsEuiccProbing = false;
+                }
             }
+        }
+
+        private void ApplyEuiccProbeResult(EuiccProbeResult result)
+        {
+            EuiccCapability = result.Capability;
+            EuiccSupportMessage = result.Message;
+            EuiccEid = !string.IsNullOrWhiteSpace(result.Eid)
+                ? result.Eid
+                : result.Capability switch
+                {
+                    EuiccCapability.Unsupported => "此卡不支持 eSIM",
+                    EuiccCapability.Supported => "EID 未返回",
+                    _ => "未读取到 EID"
+                };
+
+            EuiccProfiles.Clear();
+            foreach (var profile in result.Profiles)
+            {
+                EuiccProfiles.Add(profile);
+            }
+
+            StatusMessage = result.Capability switch
+            {
+                EuiccCapability.Supported => $"eUICC 读取完成，共 {result.Profiles.Count} 个 Profile。",
+                EuiccCapability.Unsupported => "当前卡片为普通实体 SIM，不支持 eSIM 功能。",
+                _ => result.Message
+            };
         }
 
         [RelayCommand]
@@ -931,7 +994,8 @@ namespace VoWin.ViewModels.Pages
         }
 
         private bool CanStartEuiccDownload()
-            => !IsBusy &&
+            => IsEuiccSupported &&
+               !IsBusy &&
                !IsEuiccDownloading &&
                SelectedSlot != null &&
                !string.IsNullOrWhiteSpace(EuiccActivationCode) &&
@@ -942,6 +1006,11 @@ namespace VoWin.ViewModels.Pages
         {
             var slot = SelectedSlot;
             if (slot == null) return;
+            if (!IsEuiccSupported)
+            {
+                StatusMessage = "当前卡槽尚未确认支持 eSIM，不能下载或写入 Profile。请先读取 eUICC 芯片。";
+                return;
+            }
 
             ActivationCodeModel parsed;
             try

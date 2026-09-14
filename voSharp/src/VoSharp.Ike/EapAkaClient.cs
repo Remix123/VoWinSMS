@@ -133,6 +133,9 @@ public sealed class EapAkaClient
             case EapCode.Failure:
                 var stage = ChallengeComplete ? "after AKA challenge response" : "before AKA challenge response";
                 Trace($"server rejected authentication {stage}.");
+                if (!string.IsNullOrWhiteSpace(LastAkaFailure))
+                    throw new AuthenticationException(
+                        $"EAP-AKA authentication rejected by ePDG {stage} after local failure: {LastAkaFailure}");
                 throw new AuthenticationException($"EAP-AKA authentication rejected by ePDG ({stage}).");
 
             case EapCode.Success:

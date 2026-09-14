@@ -32,7 +32,8 @@ public sealed class Socks5Client : IDisposable
     }
 
     /// <summary>
-    /// Parses a URL such as "socks5://127.0.0.1:1080" or "socks5://user:pass@10.0.0.1:1080".
+    /// Parses SOCKS5 URLs. <c>socks://</c> is accepted as a compatibility alias for
+    /// <c>socks5://</c>; HTTP/HTTPS are deliberately never accepted.
     /// </summary>
     public static Socks5Client? TryParse(string? proxyUrl)
     {
@@ -41,14 +42,15 @@ public sealed class Socks5Client : IDisposable
 
         try
         {
-            var uri = new Uri(proxyUrl.StartsWith("socks5://", StringComparison.OrdinalIgnoreCase) || proxyUrl.StartsWith("socks5h://", StringComparison.OrdinalIgnoreCase)
+            var uri = new Uri(proxyUrl.StartsWith("socks://", StringComparison.OrdinalIgnoreCase) || proxyUrl.StartsWith("socks5://", StringComparison.OrdinalIgnoreCase) || proxyUrl.StartsWith("socks5h://", StringComparison.OrdinalIgnoreCase)
                 ? proxyUrl
                 : "socks5://" + proxyUrl);
 
             // IKEv2 and ESP need SOCKS5 UDP ASSOCIATE.  An HTTP proxy cannot
             // carry these datagrams, so never reinterpret an http:// URL as a
             // SOCKS endpoint and accidentally fall back to a direct route.
-            if (!uri.Scheme.Equals("socks5", StringComparison.OrdinalIgnoreCase) &&
+            if (!uri.Scheme.Equals("socks", StringComparison.OrdinalIgnoreCase) &&
+                !uri.Scheme.Equals("socks5", StringComparison.OrdinalIgnoreCase) &&
                 !uri.Scheme.Equals("socks5h", StringComparison.OrdinalIgnoreCase))
             {
                 return null;

@@ -44,7 +44,7 @@ public static class HardwareAka
 
     /// <summary>
     /// Builds the USIM AUTHENTICATE APDU:
-    /// <c>00 88 00 81 22 10&lt;RAND 16B&gt; 10&lt;AUTN 16B&gt;</c>.
+    /// <c>00 88 00 81 22 10&lt;RAND 16B&gt; 10&lt;AUTN 16B&gt; 00</c>.
     /// Callers using a logical channel must overwrite byte 0 with the channel number.
     /// </summary>
     public static byte[] BuildAuthenticateApdu(byte[] rand, byte[] autn, bool isContext3G = true)
@@ -52,7 +52,9 @@ public static class HardwareAka
         if (rand.Length != 16 || autn.Length != 16)
             throw new ArgumentException("RAND and AUTN must be 16 bytes each.");
 
-        var apdu = new byte[5 + 34];
+        // Include Le=00 (Case 4 APDU). Some EC25/eUICC combinations accept the
+        // Case 3 form, but reject it after a profile switch unless Le is explicit.
+        var apdu = new byte[5 + 34 + 1];
         apdu[0] = 0x00;                                     // CLA
         apdu[1] = InsAuthenticate;                          // INS
         apdu[2] = 0x00;                                     // P1
@@ -64,6 +66,7 @@ public static class HardwareAka
 
         apdu[22] = 0x10;                                    // AUTN tag length
         Buffer.BlockCopy(autn, 0, apdu, 23, 16);
+        apdu[^1] = 0x00;                                    // Le: maximum response length
 
         return apdu;
     }

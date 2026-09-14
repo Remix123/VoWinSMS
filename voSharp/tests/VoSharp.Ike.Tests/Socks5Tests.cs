@@ -24,6 +24,10 @@ public class Socks5Tests
         Assert.Equal("user", client2.Username);
         Assert.Equal("pass123", client2.Password);
 
+        var client3 = Socks5Client.TryParse("socks://127.0.0.1:10808");
+        Assert.NotNull(client3);
+        Assert.Equal(10808, client3.ProxyPort);
+
         var direct = Socks5Client.TryParse("direct");
         Assert.Null(direct);
 

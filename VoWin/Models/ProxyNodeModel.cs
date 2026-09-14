@@ -8,16 +8,16 @@ namespace VoWin.Models
         private string _id = Guid.NewGuid().ToString("N");
 
         [ObservableProperty]
-        private string _name = "默认代理";
+        private string _name = "新代理节点";
 
         [ObservableProperty]
-        private string _protocol = "socks5"; // socks5, http, https
+        private string _protocol = "socks5"; // socks/socks5/socks5h only; VoWiFi requires UDP ASSOCIATE
 
         [ObservableProperty]
-        private string _host = "127.0.0.1";
+        private string _host = string.Empty;
 
         [ObservableProperty]
-        private int _port = 1080;
+        private int _port;
 
         [ObservableProperty]
         private string? _username;

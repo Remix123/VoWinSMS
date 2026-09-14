@@ -63,6 +63,7 @@ namespace VoWin.Services
         public ObservableCollection<SmsConversationModel> Conversations { get; } = new();
         public ObservableCollection<CallRecordModel> CallHistory { get; } = new();
         public ObservableCollection<ProxyNodeModel> ProxyPresets { get; } = new();
+        public ObservableCollection<IccidRouteModel> IccidRoutes { get; } = new();
         public ObservableCollection<CountryRouteModel> CountryRoutes { get; } = new();
         public ObservableCollection<LogEntryModel> Logs { get; } = new();
 
@@ -92,6 +93,7 @@ namespace VoWin.Services
         public event Action<string>? CallMediaStatusChanged;
         public event Action<SmsMessageModel>? IncomingSmsReceived;
         public event Action<string, string?>? IncomingCallReceived;
+        public event Action? EgressRoutesChanged;
 
         public IPreferenceDatabaseService Preferences { get; }
         private DateTime? _callStartTime;
@@ -132,89 +134,68 @@ namespace VoWin.Services
             Kernel = new VoKernel();
             _logWriterTask = RunLogWriterAsync(_logWriterCts.Token);
 
-            InitDefaultPresets();
             RegisterKernelEvents();
         }
 
-        private void InitDefaultPresets()
+        private static readonly HashSet<string> LegacyBundledCountryCodes = new(StringComparer.OrdinalIgnoreCase)
         {
-            ProxyPresets.Add(new ProxyNodeModel
-            {
-                Name = "本地 Clash / v2ray (SOCKS5)",
-                Protocol = "socks5",
-                Host = "127.0.0.1",
-                Port = 7890
-            });
-            ProxyPresets.Add(new ProxyNodeModel
-            {
-                Name = "通用本地 SOCKS5 (1080)",
-                Protocol = "socks5",
-                Host = "127.0.0.1",
-                Port = 1080
-            });
-            ProxyPresets.Add(new ProxyNodeModel
-            {
-                Name = "本地 HTTP 代理 (7890)",
-                Protocol = "http",
-                Host = "127.0.0.1",
-                Port = 7890
-            });
+            "CN", "US", "GB", "HK", "JP", "SG"
+        };
 
-            // Initialize default country-aware egress rules (MCC Dispatch)
-            CountryRoutes.Add(new CountryRouteModel
+        /// <summary>
+        /// Removes only the built-in examples that older releases wrote to the
+        /// database.  User-created entries are intentionally retained.  A
+        /// profile which pointed at one of the examples is removed as well so a
+        /// no-config installation cannot silently regain a localhost proxy.
+        /// </summary>
+        private async Task RemoveLegacyBundledEgressDefaultsAsync(
+            List<ProxyNodeModel> savedNodes,
+            List<CountryRouteModel> savedRoutes)
+        {
+            var bundledNodes = savedNodes.Where(IsLegacyBundledProxy).ToList();
+            var bundledNodeIds = bundledNodes
+                .Select(node => node.Id)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            var bundledRoutes = savedRoutes
+                .Where(route =>
+                    (route.IsDirect && LegacyBundledCountryCodes.Contains(route.CountryCode)) ||
+                    (!string.IsNullOrWhiteSpace(route.ProxyNodeId) && bundledNodeIds.Contains(route.ProxyNodeId)))
+                .ToList();
+
+            foreach (var route in bundledRoutes)
             {
-                CountryCode = "CN",
-                CountryName = "中国",
-                FlagEmoji = "🇨🇳",
-                MccList = "460",
-                ProxyNodeId = null,
-                ProxyNodeName = "直连模式 (Direct)"
-            });
-            CountryRoutes.Add(new CountryRouteModel
+                await Preferences.DeleteCountryRouteAsync(route.CountryCode);
+                savedRoutes.Remove(route);
+            }
+
+            foreach (var node in bundledNodes)
             {
-                CountryCode = "US",
-                CountryName = "美国",
-                FlagEmoji = "🇺🇸",
-                MccList = "310, 311, 312",
-                ProxyNodeId = null,
-                ProxyNodeName = "直连 (未分配节点)"
-            });
-            CountryRoutes.Add(new CountryRouteModel
+                await Preferences.DeleteProxyNodeAsync(node.Id);
+                savedNodes.Remove(node);
+            }
+
+            if (bundledNodes.Count != 0 || bundledRoutes.Count != 0)
             {
-                CountryCode = "GB",
-                CountryName = "英国",
-                FlagEmoji = "🇬🇧",
-                MccList = "234, 235",
-                ProxyNodeId = null,
-                ProxyNodeName = "直连 (未分配节点)"
-            });
-            CountryRoutes.Add(new CountryRouteModel
+                AddLog("INFO", "Proxy",
+                    $"已清理旧版本内置代理/分流项：{bundledNodes.Count} 个代理节点，{bundledRoutes.Count} 条路由。未配置时将保持直连。");
+            }
+        }
+
+        private static bool IsLegacyBundledProxy(ProxyNodeModel node)
+        {
+            if (!string.IsNullOrWhiteSpace(node.Username) || !string.IsNullOrWhiteSpace(node.Password) ||
+                !node.Host.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase))
             {
-                CountryCode = "HK",
-                CountryName = "中国香港",
-                FlagEmoji = "🇭🇰",
-                MccList = "454",
-                ProxyNodeId = null,
-                ProxyNodeName = "直连 (未分配节点)"
-            });
-            CountryRoutes.Add(new CountryRouteModel
-            {
-                CountryCode = "JP",
-                CountryName = "日本",
-                FlagEmoji = "🇯🇵",
-                MccList = "440, 441",
-                ProxyNodeId = null,
-                ProxyNodeName = "直连 (未分配节点)"
-            });
-            CountryRoutes.Add(new CountryRouteModel
-            {
-                CountryCode = "SG",
-                CountryName = "新加坡",
-                FlagEmoji = "🇸🇬",
-                MccList = "525",
-                ProxyNodeId = null,
-                ProxyNodeName = "直连 (未分配节点)"
-            });
+                return false;
+            }
+
+            return (node.Name.Equals("本地 Clash / v2ray (SOCKS5)", StringComparison.Ordinal) &&
+                    node.Protocol.Equals("socks5", StringComparison.OrdinalIgnoreCase) && node.Port == 7890) ||
+                   (node.Name.Equals("通用本地 SOCKS5 (1080)", StringComparison.Ordinal) &&
+                    node.Protocol.Equals("socks5", StringComparison.OrdinalIgnoreCase) && node.Port == 1080) ||
+                   (node.Name.Equals("本地 HTTP 代理 (7890)", StringComparison.Ordinal) &&
+                    node.Protocol.Equals("http", StringComparison.OrdinalIgnoreCase) && node.Port == 7890);
         }
 
         public async Task InitializeAsync()
@@ -279,8 +260,44 @@ namespace VoWin.Services
                     }
                 });
 
-                // 3. Load ProxyPresets & CountryRoutes from SQLite
-                var savedNodes = await Preferences.GetAllProxyNodesAsync();
+                // 3. Load only user-created proxy nodes and country routes.  No
+                // local proxy or country route is assumed by default: an empty
+                // configuration must remain direct and never inherit a TUN's
+                // incidental localhost listener.
+                var savedNodes = (await Preferences.GetAllProxyNodesAsync()).ToList();
+                var savedRoutes = (await Preferences.GetAllCountryRoutesAsync()).ToList();
+                var savedIccidRoutes = (await Preferences.GetAllIccidRoutesAsync()).ToList();
+                await RemoveLegacyBundledEgressDefaultsAsync(savedNodes, savedRoutes);
+
+                // Older releases stored a per-SIM proxy URL inside SimPreferences.
+                // Promote it once into the explicit ICCID routing tier so existing
+                // users keep their route and can now see/edit the rule in one place.
+                var legacySimPreferences = await Preferences.GetAllSimPreferencesAsync();
+                foreach (var simPreference in legacySimPreferences.Where(preference =>
+                             !string.IsNullOrWhiteSpace(preference.Iccid) &&
+                             !string.IsNullOrWhiteSpace(preference.DedicatedProxyUrl)))
+                {
+                    if (savedIccidRoutes.Any(route => string.Equals(route.Iccid, simPreference.Iccid, StringComparison.Ordinal)))
+                        continue;
+
+                    var legacyUrl = simPreference.DedicatedProxyUrl!.Trim();
+                    var matchingNode = savedNodes.FirstOrDefault(node =>
+                        string.Equals(node.ToProxyUrl(), legacyUrl, StringComparison.OrdinalIgnoreCase));
+                    var migrated = new IccidRouteModel
+                    {
+                        Iccid = simPreference.Iccid.Trim(),
+                        CardName = simPreference.CardNickname,
+                        ImsiSnapshot = simPreference.Imsi,
+                        PhoneNumber = null,
+                        ProxyNodeId = matchingNode?.Id,
+                        ProxyUrl = matchingNode == null ? legacyUrl : null,
+                        ProxyNodeName = matchingNode?.Name ?? DescribeProxyEndpoint(legacyUrl),
+                        UpdatedAt = DateTime.Now
+                    };
+                    savedIccidRoutes.Add(migrated);
+                    await Preferences.SaveIccidRouteAsync(migrated);
+                }
+
                 if (savedNodes.Count > 0)
                 {
                     await RunOnUiAsync(() =>
@@ -289,12 +306,7 @@ namespace VoWin.Services
                         foreach (var n in savedNodes) ProxyPresets.Add(n);
                     });
                 }
-                else
-                {
-                    foreach (var n in ProxyPresets) await Preferences.SaveProxyNodeAsync(n);
-                }
 
-                var savedRoutes = await Preferences.GetAllCountryRoutesAsync();
                 if (savedRoutes.Count > 0)
                 {
                     await RunOnUiAsync(() =>
@@ -303,9 +315,14 @@ namespace VoWin.Services
                         foreach (var r in savedRoutes) CountryRoutes.Add(r);
                     });
                 }
-                else
+
+                if (savedIccidRoutes.Count > 0)
                 {
-                    foreach (var r in CountryRoutes) await Preferences.SaveCountryRouteAsync(r);
+                    await RunOnUiAsync(() =>
+                    {
+                        IccidRoutes.Clear();
+                        foreach (var route in savedIccidRoutes) IccidRoutes.Add(route);
+                    });
                 }
 
                 AddLog("INFO", "Preferences", $"SQLite initialized ({callHistory.Count} calls, {allSms.Count} messages loaded)");
@@ -327,6 +344,15 @@ namespace VoWin.Services
                 var found = await DiscoverSlotsCoreAsync();
                 await RunOnUiAsync(SyncSlots);
                 AddLog("INFO", "VoKernelService", $"Scan finished, found {found.Count} slots");
+
+                // The eUICC probe is read-only and happens before restoring
+                // auto-VoWiFi.  This both makes eSIM support visible at launch
+                // and avoids competing APDU traffic with an automatic IMS start.
+                InitialScanStatus = "正在识别 eSIM 芯片…";
+                foreach (var slot in found)
+                {
+                    await ProbeEuiccAsync(slot.Id).ConfigureAwait(false);
+                }
 
                 InitialScanStatus = "正在恢复模块设置…";
                 foreach (var slot in found)
@@ -546,12 +572,34 @@ namespace VoWin.Services
             Kernel.LogEmitted += (s, e) =>
             {
                 AddLog(e.Level, e.Source, e.Message);
+                UpdateInitialStartupProgress(e.Source, e.Message);
             };
 
             Kernel.SystemErrorOccurred += (s, e) =>
             {
                 AddLog("ERROR", e.Source, e.ErrorMessage);
             };
+        }
+
+        private void UpdateInitialStartupProgress(string source, string message)
+        {
+            if (!IsInitialScanRunning || !source.Equals("SIM", StringComparison.OrdinalIgnoreCase))
+                return;
+
+            string? status = null;
+            if (message.Contains("startup stage=SIM readiness", StringComparison.OrdinalIgnoreCase))
+            {
+                status = message.Contains("ADF.USIM=selected", StringComparison.OrdinalIgnoreCase)
+                    ? "SIM 已响应，正在确认 USIM 应用稳定性…"
+                    : "正在等待 SIM 卡与 USIM 应用就绪…";
+            }
+            else if (message.Contains("startup SIM readiness timed out", StringComparison.OrdinalIgnoreCase))
+            {
+                status = "SIM 初始化较慢；正在保留设备并等待后续重试…";
+            }
+
+            if (status is not null)
+                PostToUi(() => InitialScanStatus = status, DispatcherPriority.DataBind);
         }
 
         private void RequestSlotSync()
@@ -1285,7 +1333,7 @@ namespace VoWin.Services
                 // The earlier code changed only the WPF model and never updated
                 // ModemSlot in the kernel, so the actual IKE session could use a
                 // stale proxy or direct UDP.
-                var effectiveProxy = targetSlot.ProxyUrl ?? ResolveEgressProxyForSlot(targetSlot.Id);
+                var effectiveProxy = ResolveEgressProxyForSlot(targetSlot.Id);
                 if (!Kernel.SetSlotProxy(targetSlot.Id, effectiveProxy))
                 {
                     AddLog("ERROR", "Proxy", $"Unable to apply the proxy route to slot {targetSlot.Id}.");
@@ -1314,6 +1362,24 @@ namespace VoWin.Services
         {
             var result = await Kernel.ProbeVoWifiLivenessAsync(slotId);
             AddLog(result.Success ? "INFO" : "WARN", "VoWiFi", $"SIP 探针保活检测: {(result.Success ? "成功" : "失败")}, RTT: {result.RttMs}ms, 状态: {result.Status}");
+            return result;
+        }
+
+        public async Task<EuiccProbeResult> ProbeEuiccAsync(string? slotId = null, CancellationToken cancellationToken = default)
+        {
+            var slot = (!string.IsNullOrEmpty(slotId) ? Slots.FirstOrDefault(s => s.Id == slotId) : ActiveSlot) ?? Slots.FirstOrDefault();
+            if (slot == null)
+            {
+                return new EuiccProbeResult(
+                    EuiccCapability.Error,
+                    null,
+                    Array.Empty<Profile>(),
+                    "未发现可用卡槽，无法检测 eUICC 芯片。");
+            }
+
+            var result = await slot.ProbeEuiccAsync(cancellationToken).ConfigureAwait(false);
+            var level = result.Capability == EuiccCapability.Error ? "WARN" : "INFO";
+            AddLog(level, "eSIM", $"卡槽 [{slot.Name}] eUICC 检测：{result.Message}");
             return result;
         }
 
@@ -1442,7 +1508,7 @@ namespace VoWin.Services
             try
             {
                 using var proxy = Socks5Client.TryParse(node.ToProxyUrl())
-                    ?? throw new InvalidOperationException("VoWiFi 需要 socks5:// 或 socks5h:// 代理；HTTP 代理不支持 IKEv2/ESP UDP。");
+                    ?? throw new InvalidOperationException("VoWiFi 需要 socks://、socks5:// 或 socks5h:// 代理；HTTP 代理不支持 IKEv2/ESP UDP。");
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
                 relay = await proxy.UdpAssociateAsync(cts.Token);
 
@@ -1493,6 +1559,7 @@ namespace VoWin.Services
                 ? Slots.FirstOrDefault(s => s.Id == slotId)
                 : ActiveSlot) ?? Slots.FirstOrDefault();
             var diag = slot?.VoWifiDiag ?? VoWifiDiag;
+            var routeDecision = await ResolveVoWifiRouteAsync(slot?.Id).ConfigureAwait(false);
             var report = new StringBuilder();
             var appVersion = typeof(VoKernelService).Assembly.GetName().Version?.ToString() ?? "unknown";
 
@@ -1508,7 +1575,14 @@ namespace VoWin.Services
             report.AppendLine($"Firmware: {slot?.Modem?.FirmwareRevision ?? "unknown"}");
             report.AppendLine($"Flight mode: {slot?.IsFlightMode.ToString() ?? "unknown"}");
             report.AppendLine($"SIM PLMN: {slot?.Sim?.Mcc ?? "?"}-{slot?.Sim?.Mnc ?? "?"}");
+            report.AppendLine($"IMSI source: {slot?.ImsiIdentitySource ?? "unknown"}");
+            report.AppendLine($"EF_IMSI PLMN: {DescribeImsiPlmn(slot?.LastPermanentImsi)}");
+            report.AppendLine($"AT+CIMI PLMN: {DescribeImsiPlmn(slot?.LastReportedImsi)}");
+            report.AppendLine($"Multi-IMSI PLMN conflict: {slot?.HasImsiPlmnConflict.ToString() ?? "unknown"}");
+            report.AppendLine($"Stable routing MCC: {slot?.StableRoutingMcc ?? "unknown"}");
             report.AppendLine($"SOCKS route configured: {!string.IsNullOrWhiteSpace(slot?.ProxyUrl)}");
+            report.AppendLine($"Route rule: {routeDecision.RuleDisplay}");
+            report.AppendLine($"Route target: {routeDecision.TargetDisplay}");
             report.AppendLine();
             report.AppendLine("=== VoWiFi / IMS snapshot ===");
             report.AppendLine($"State: {diag?.State.ToString() ?? "unavailable"}");
@@ -1539,6 +1613,12 @@ namespace VoWin.Services
 
             AddLog("INFO", "Diagnostics", "A concise IMS registration-chain diagnostic report was generated (sensitive fields redacted).");
             return report.ToString();
+        }
+
+        private static string DescribeImsiPlmn(string? imsi)
+        {
+            if (string.IsNullOrWhiteSpace(imsi) || imsi.Length < 5) return "unavailable";
+            return $"{imsi[..3]}-{imsi.Substring(3, 2)}…";
         }
 
         private static IReadOnlyList<string> ExtractLatestImsRegistrationChain(IEnumerable<string> source)
@@ -1620,6 +1700,7 @@ namespace VoWin.Services
             ProxyPresets.Add(node);
             _ = Preferences.SaveProxyNodeAsync(node);
             AddLog("INFO", "Proxy", $"Added proxy preset: {node.Name} ({node.ToProxyUrl()})");
+            RaiseEgressRoutesChanged();
         }
 
         public void RemoveProxyPreset(string nodeId)
@@ -1630,6 +1711,7 @@ namespace VoWin.Services
                 ProxyPresets.Remove(item);
                 _ = Preferences.DeleteProxyNodeAsync(nodeId);
                 AddLog("INFO", "Proxy", $"Removed proxy preset: {item.Name}");
+                RaiseEgressRoutesChanged();
             }
         }
 
@@ -1638,8 +1720,29 @@ namespace VoWin.Services
             var slot = Slots.FirstOrDefault(s => s.Id == slotId);
             if (slot == null) return null;
 
-            // Resolve country from SIM MCC and match country route in proxy pool
-            var mcc = slot.Sim?.Mcc;
+            // Tier 1: the existence of an ICCID row always wins. A row without
+            // a proxy is an explicit DIRECT rule and must not fall through.
+            var iccid = slot.Sim?.Iccid?.Trim();
+            if (!string.IsNullOrWhiteSpace(iccid))
+            {
+                var cardRule = IccidRoutes.FirstOrDefault(route =>
+                    string.Equals(route.Iccid, iccid, StringComparison.Ordinal));
+                if (cardRule != null)
+                {
+                    if (!string.IsNullOrWhiteSpace(cardRule.ProxyNodeId))
+                    {
+                        return ToSupportedSocksProxy(
+                            ProxyPresets.FirstOrDefault(node => node.Id == cardRule.ProxyNodeId)?.ToProxyUrl());
+                    }
+
+                    // ProxyUrl exists only for a migrated legacy per-SIM URL.
+                    return ToSupportedSocksProxy(cardRule.ProxyUrl);
+                }
+            }
+
+            // Tier 2: without an ICCID row, resolve the country from the active
+            // IMSI MCC and match the PLMN country route.
+            var mcc = slot.StableRoutingMcc ?? slot.Sim?.Mcc;
             if (!string.IsNullOrWhiteSpace(mcc))
             {
                 var country = MccCountryHelper.FindByMcc(mcc);
@@ -1651,13 +1754,231 @@ namespace VoWin.Services
                         var node = ProxyPresets.FirstOrDefault(p => p.Id == rule.ProxyNodeId);
                         if (node != null)
                         {
-                            return node.ToProxyUrl();
+                            return ToSupportedSocksProxy(node.ToProxyUrl());
                         }
                     }
                 }
             }
 
             return null;
+        }
+
+        public async Task<VoWifiRouteDecision> ResolveVoWifiRouteAsync(string? slotId = null)
+        {
+            var slot = (!string.IsNullOrWhiteSpace(slotId)
+                ? Slots.FirstOrDefault(candidate => string.Equals(candidate.Id, slotId, StringComparison.OrdinalIgnoreCase))
+                : ActiveSlot) ?? Slots.FirstOrDefault();
+
+            if (slot == null)
+            {
+                return new VoWifiRouteDecision(
+                    "未选择通信设备",
+                    "未解析",
+                    "请先选择已识别的 SIM 卡。",
+                    null,
+                    false);
+            }
+
+            await Task.CompletedTask;
+            var iccid = slot.Sim?.Iccid?.Trim();
+            var cardRule = string.IsNullOrWhiteSpace(iccid)
+                ? null
+                : IccidRoutes.FirstOrDefault(route => string.Equals(route.Iccid, iccid, StringComparison.Ordinal));
+            if (cardRule != null)
+            {
+                if (!string.IsNullOrWhiteSpace(cardRule.ProxyNodeId))
+                {
+                    var node = ProxyPresets.FirstOrDefault(candidate => candidate.Id == cardRule.ProxyNodeId);
+                    if (node == null)
+                    {
+                        return new VoWifiRouteDecision(
+                            "ICCID 卡规则（最高优先级）",
+                            "直连 UDP（引用节点不存在）",
+                            "已命中这张卡的 ICCID 规则，因此不会继续匹配 PLMN；请重新选择有效代理节点。",
+                            null,
+                            false);
+                    }
+
+                    using var parsedNode = Socks5Client.TryParse(node.ToProxyUrl());
+                    if (parsedNode == null)
+                    {
+                        return new VoWifiRouteDecision(
+                            "ICCID 卡规则（最高优先级）",
+                            "直连 UDP（节点协议不支持）",
+                            "已命中 ICCID 规则，但该节点不是 SOCKS5；不会继续匹配 PLMN，也不会回落到系统/TUN 代理。",
+                            null,
+                            false);
+                    }
+
+                    return new VoWifiRouteDecision(
+                        "ICCID 卡规则（最高优先级）",
+                        $"SOCKS5：{node.Name} ({node.Host}:{node.Port})",
+                        $"ICCID {iccid} 已设置专属出口；IMSI MCC/PLMN 国家规则已被覆盖。",
+                        node.ToProxyUrl(),
+                        true);
+                }
+
+                if (!string.IsNullOrWhiteSpace(cardRule.ProxyUrl))
+                {
+                    return DescribeConfiguredRoute(
+                        "ICCID 卡规则（最高优先级，旧版地址）",
+                        cardRule.ProxyUrl,
+                        $"ICCID {iccid} 已设置专属出口；IMSI MCC/PLMN 国家规则已被覆盖。");
+                }
+
+                return new VoWifiRouteDecision(
+                    "ICCID 卡规则（最高优先级）",
+                    "直连 UDP",
+                    $"ICCID {iccid} 明确设为直连，因此不会继续匹配 IMSI MCC/PLMN 国家规则。",
+                    null,
+                    false);
+            }
+
+            // Country dispatch is deliberately based on the IMSI-derived MCC.
+            // ICCID is used only to locate the per-SIM preference above; it is
+            // not an authoritative country or carrier-routing source.
+            var mcc = slot.StableRoutingMcc ?? slot.Sim?.Mcc;
+            var country = MccCountryHelper.FindByMcc(mcc);
+            if (country == null)
+            {
+                return new VoWifiRouteDecision(
+                    "无 ICCID 卡规则；IMSI MCC 无法识别",
+                    "直连 UDP",
+                    $"未能由当前 IMSI 解析 MCC（{mcc ?? "--"}），因此没有命中国家分流规则。",
+                    null,
+                    false);
+            }
+
+            var countryRule = CountryRoutes.FirstOrDefault(rule =>
+                string.Equals(rule.CountryCode, country.Code, StringComparison.OrdinalIgnoreCase));
+            if (countryRule != null && !countryRule.IsDirect && !string.IsNullOrWhiteSpace(countryRule.ProxyNodeId))
+            {
+                var node = ProxyPresets.FirstOrDefault(candidate => candidate.Id == countryRule.ProxyNodeId);
+                if (node != null)
+                {
+                    using var parsedNode = Socks5Client.TryParse(node.ToProxyUrl());
+                    if (parsedNode == null)
+                    {
+                        return new VoWifiRouteDecision(
+                            $"自动国家规则（IMSI MCC {mcc} → {country.Flag} {country.Name}）",
+                            "直连 UDP（节点协议不支持）",
+                            "国家规则命中的节点不是 SOCKS5；不会回落到系统/TUN 代理。",
+                            null,
+                            false);
+                    }
+
+                    return new VoWifiRouteDecision(
+                        $"自动国家规则（IMSI MCC {mcc} → {country.Flag} {country.Name}）",
+                        $"SOCKS5：{node.Name} ({node.Host}:{node.Port})",
+                        slot.HasImsiPlmnConflict
+                            ? "同一 ICCID 曾报告不同 PLMN；为避免出口抖动，国家规则使用首次稳定 MCC。建议为这张卡配置 ICCID 专属规则。"
+                            : "未找到 ICCID 卡规则，因此由 IMSI 的 MCC 命中次级 PLMN 规则。",
+                        node.ToProxyUrl(),
+                        true);
+                }
+
+                return new VoWifiRouteDecision(
+                    $"自动国家规则（IMSI MCC {mcc} → {country.Flag} {country.Name}）",
+                    "直连 UDP",
+                    "国家规则引用的代理节点已不存在，因此不会回退到系统/TUN 代理。",
+                    null,
+                    false);
+            }
+
+            var ruleNote = countryRule?.IsDirect == true
+                ? "该国家规则明确配置为直连。"
+                : "未配置该国家的代理规则。";
+            return new VoWifiRouteDecision(
+                $"自动国家规则（IMSI MCC {mcc} → {country.Flag} {country.Name}）",
+                "直连 UDP",
+                slot.HasImsiPlmnConflict
+                    ? $"同一 ICCID 曾报告不同 PLMN；国家分流已锁定首次稳定 MCC。{ruleNote} 建议配置 ICCID 专属规则。"
+                    : $"未找到 ICCID 卡规则；{ruleNote}",
+                null,
+                false);
+        }
+
+        private static VoWifiRouteDecision DescribeConfiguredRoute(string ruleDisplay, string proxyUrl, string detail)
+        {
+            using var parsedProxy = Socks5Client.TryParse(proxyUrl);
+            if (parsedProxy == null)
+            {
+                return new VoWifiRouteDecision(
+                    ruleDisplay,
+                    "直连 UDP（保存的代理无效，已忽略）",
+                    $"{detail} 但保存的地址不是受支持的 socks://、socks5:// 或 socks5h:// 代理，VoWiFi 不会使用 HTTP/TUN 代理。",
+                    null,
+                    false);
+            }
+
+            return new VoWifiRouteDecision(
+                ruleDisplay,
+                $"SOCKS5：{DescribeProxyEndpoint(proxyUrl)}",
+                detail,
+                proxyUrl,
+                true);
+        }
+
+        private static string? ToSupportedSocksProxy(string? proxyUrl)
+        {
+            if (string.IsNullOrWhiteSpace(proxyUrl)) return null;
+            using var parsedProxy = Socks5Client.TryParse(proxyUrl);
+            return parsedProxy == null ? null : proxyUrl.Trim();
+        }
+
+        public void SaveIccidRoute(string iccid, string? proxyNodeId, string? cardName = null, string? imsi = null, string? phoneNumber = null)
+        {
+            var normalizedIccid = iccid?.Trim();
+            if (string.IsNullOrWhiteSpace(normalizedIccid))
+                throw new ArgumentException("ICCID 不能为空。", nameof(iccid));
+
+            var node = !string.IsNullOrWhiteSpace(proxyNodeId)
+                ? ProxyPresets.FirstOrDefault(candidate => candidate.Id == proxyNodeId)
+                : null;
+            if (!string.IsNullOrWhiteSpace(proxyNodeId) && node == null)
+                throw new InvalidOperationException("所选代理节点不存在或已被删除。");
+
+            var route = IccidRoutes.FirstOrDefault(candidate =>
+                string.Equals(candidate.Iccid, normalizedIccid, StringComparison.Ordinal));
+            if (route == null)
+            {
+                route = new IccidRouteModel { Iccid = normalizedIccid };
+                IccidRoutes.Add(route);
+            }
+
+            route.CardName = string.IsNullOrWhiteSpace(cardName) ? route.CardName : cardName.Trim();
+            route.ImsiSnapshot = string.IsNullOrWhiteSpace(imsi) ? route.ImsiSnapshot : imsi.Trim();
+            route.PhoneNumber = string.IsNullOrWhiteSpace(phoneNumber) ? route.PhoneNumber : phoneNumber.Trim();
+            route.ProxyNodeId = node?.Id;
+            route.ProxyUrl = null;
+            route.ProxyNodeName = node?.Name ?? "直连模式 (Direct)";
+            route.UpdatedAt = DateTime.Now;
+            _ = Preferences.SaveIccidRouteAsync(route);
+
+            AddLog("INFO", "Proxy Routing",
+                $"Updated ICCID egress rule: ****{normalizedIccid[^Math.Min(4, normalizedIccid.Length)..]} -> {node?.Name ?? "Direct"}");
+            RaiseEgressRoutesChanged();
+        }
+
+        public void RemoveIccidRoute(string iccid)
+        {
+            var normalizedIccid = iccid?.Trim();
+            if (string.IsNullOrWhiteSpace(normalizedIccid)) return;
+
+            var route = IccidRoutes.FirstOrDefault(candidate =>
+                string.Equals(candidate.Iccid, normalizedIccid, StringComparison.Ordinal));
+            if (route == null) return;
+
+            IccidRoutes.Remove(route);
+            _ = Preferences.DeleteIccidRouteAsync(normalizedIccid);
+            AddLog("INFO", "Proxy Routing",
+                $"Removed ICCID egress rule: ****{normalizedIccid[^Math.Min(4, normalizedIccid.Length)..]}; the card now follows its IMSI MCC/PLMN rule.");
+            RaiseEgressRoutesChanged();
+        }
+
+        private void RaiseEgressRoutesChanged()
+        {
+            try { EgressRoutesChanged?.Invoke(); } catch { }
         }
 
         public void SaveCountryRoute(string countryCode, string? proxyNodeId)
@@ -1694,6 +2015,7 @@ namespace VoWin.Services
             }
 
             AddLog("INFO", "Proxy Routing", $"Updated country egress rule: {countryCode} -> {(node != null ? node.Name : "Direct")}");
+            RaiseEgressRoutesChanged();
         }
 
         public void RemoveCountryRoute(string countryCode)
@@ -1704,6 +2026,7 @@ namespace VoWin.Services
                 CountryRoutes.Remove(rule);
                 _ = Preferences.DeleteCountryRouteAsync(countryCode);
                 AddLog("INFO", "Proxy Routing", $"Removed country rule: {countryCode}");
+                RaiseEgressRoutesChanged();
             }
         }
 
@@ -1790,17 +2113,25 @@ namespace VoWin.Services
                 }
                 slot.CardNickname = simPref?.CardNickname;
 
-                // A SIM follows the card between modules, so it must override
-                // the module preference.  Both are applied to the kernel before
-                // any VoWiFi session can begin.
-                var preferredProxy = !string.IsNullOrWhiteSpace(simPref?.DedicatedProxyUrl)
-                    ? simPref.DedicatedProxyUrl
-                    : modPref?.DefaultProxyUrl;
-                Kernel.SetSlotProxy(slot.Id,
-                    string.IsNullOrWhiteSpace(preferredProxy) ? null : preferredProxy!.Trim());
-                AddLog("INFO", "Proxy", string.IsNullOrWhiteSpace(preferredProxy)
-                    ? $"已恢复卡槽 [{slot.Name}] 的直连设置。"
-                    : $"已恢复卡槽 [{slot.Name}] 的代理设置: {DescribeProxyEndpoint(preferredProxy)}");
+                // Routing is resolved from exactly two persistent tiers:
+                // ICCID card rule first, then IMSI MCC/PLMN country rule.
+                // Legacy module/default proxy fields are deliberately ignored
+                // here so they cannot silently override the visible rule table.
+                var resolvedProxy = ResolveEgressProxyForSlot(slot.Id);
+                if (!Kernel.SetSlotProxy(slot.Id, resolvedProxy))
+                {
+                    Kernel.SetSlotProxy(slot.Id, null);
+                    slot.ProxyUrl = null;
+                    AddLog("WARN", "Proxy",
+                        $"卡槽 [{slot.Name}] 命中的分流代理无效，已安全回退到直连；VoWiFi 仅允许 socks://、socks5:// 或 socks5h://。");
+                }
+                else
+                {
+                    slot.ProxyUrl = resolvedProxy;
+                    AddLog("INFO", "Proxy", resolvedProxy is null
+                        ? $"已按 ICCID > IMSI MCC/PLMN 规则解析卡槽 [{slot.Name}]：直连。"
+                        : $"已按 ICCID > IMSI MCC/PLMN 规则解析卡槽 [{slot.Name}]：{DescribeProxyEndpoint(resolvedProxy)}");
+                }
 
                 ApplyVoWifiHomeIdentity(slot, simPref);
 

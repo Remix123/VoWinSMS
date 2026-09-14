@@ -2,6 +2,8 @@ using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using System.ComponentModel;
+using System.Text.RegularExpressions;
+using System.Threading;
 using System.Windows.Data;
 using VoSharp.Kernel.Pool;
 using VoWin.Helpers;
@@ -12,9 +14,11 @@ namespace VoWin.ViewModels.Pages
 {
     public class EgressOptionModel
     {
+        public const string FollowPlmnNodeId = "__FOLLOW_PLMN__";
         public string? NodeId { get; }
         public string DisplayName { get; }
         public bool IsDirect => string.IsNullOrEmpty(NodeId);
+        public bool IsFollowPlmn => string.Equals(NodeId, FollowPlmnNodeId, StringComparison.Ordinal);
 
         public EgressOptionModel(string? nodeId, string displayName)
         {
@@ -33,11 +37,13 @@ namespace VoWin.ViewModels.Pages
         public ObservableCollection<ModemSlot> Slots => _kernelService.Slots;
         public ObservableCollection<ProxyNodeModel> ProxyPresets => _kernelService.ProxyPresets;
         public ObservableCollection<ProxyNodeModel> Presets => ProxyPresets;
+        public ObservableCollection<IccidRouteModel> IccidRoutes => _kernelService.IccidRoutes;
         public ObservableCollection<CountryRouteModel> CountryRoutes => _kernelService.CountryRoutes;
 
         private readonly List<CountryMeta> _allKnownCountries;
         public ObservableCollection<CountryMeta> FilteredAvailableCountries { get; } = new();
         public ObservableCollection<EgressOptionModel> AvailableEgressOptions { get; } = new();
+        public ObservableCollection<SimRouteCardOption> IccidCardOptions { get; } = new();
 
         private readonly ICollectionView? _filteredCountryRoutesView;
         public ICollectionView? FilteredCountryRoutes => _filteredCountryRoutesView;
@@ -98,25 +104,34 @@ namespace VoWin.ViewModels.Pages
         private ModemSlot? _selectedSlot;
 
         [ObservableProperty]
+        private SimRouteCardOption? _selectedIccidCard;
+
+        [ObservableProperty]
+        private EgressOptionModel? _selectedIccidEgress;
+
+        [ObservableProperty]
+        private IccidRouteModel? _selectedIccidRoute;
+
+        [ObservableProperty]
         private ModemSlot? _selectedSlotForBind;
 
         [ObservableProperty]
         private ProxyNodeModel? _selectedPreset;
 
         [ObservableProperty]
-        private string _newPresetUrl = "socks5://127.0.0.1:1080";
+        private string _newPresetUrl = string.Empty;
 
         [ObservableProperty]
-        private string _newPresetName = "新代理节点";
+        private string _newPresetName = string.Empty;
 
         [ObservableProperty]
         private string _newPresetProtocol = "socks5";
 
         [ObservableProperty]
-        private string _newPresetHost = "127.0.0.1";
+        private string _newPresetHost = string.Empty;
 
         [ObservableProperty]
-        private int _newPresetPort = 1080;
+        private int _newPresetPort;
 
         [ObservableProperty]
         private string _newPresetUsername = string.Empty;
@@ -143,6 +158,20 @@ namespace VoWin.ViewModels.Pages
                 return $"{total} 条分流规则 · {direct} 条直连 · {proxy} 条节点代理";
             }
         }
+
+        public string IccidRulesSummaryText
+        {
+            get
+            {
+                int direct = IccidRoutes.Count(route => route.IsDirect);
+                return $"{IccidRoutes.Count} 条 ICCID 规则 · {direct} 条直连 · {IccidRoutes.Count - direct} 条节点代理";
+            }
+        }
+
+        public string SelectedIccidText => SelectedIccidCard?.Iccid ?? "所有模块均未读取到 ICCID";
+        public string SelectedIccidImsiText => SelectedIccidCard?.Imsi is { Length: > 0 } imsi
+            ? $"{SelectedIccidCard.CardName} · {SelectedIccidCard.PhoneNumber} · 当前 IMSI：{imsi} · ICCID 规则将覆盖其 MCC/PLMN"
+            : "当前 SIM 尚未读取 IMSI";
 
         public string NodePoolSummaryText
         {
@@ -181,6 +210,14 @@ namespace VoWin.ViewModels.Pages
 
             RefreshEgressOptions();
             QuickAddSelectedEgress = AvailableEgressOptions.FirstOrDefault();
+            RefreshIccidCardOptions();
+            SyncIccidEditor();
+
+            IccidRoutes.CollectionChanged += (s, e) =>
+            {
+                UpdateSummaries();
+                SyncIccidEditor();
+            };
 
             CountryRoutes.CollectionChanged += (s, e) =>
             {
@@ -193,12 +230,193 @@ namespace VoWin.ViewModels.Pages
                 RefreshEgressOptions();
                 UpdateSummaries();
             };
+
+            Slots.CollectionChanged += (s, e) => QueueIccidCardRefresh();
+            _kernelService.Kernel.SimStateChanged += (s, e) => QueueIccidCardRefresh();
+            _kernelService.Kernel.VoWifiStateChanged += (s, e) => QueueIccidCardRefresh();
+
+            _kernelService.EgressRoutesChanged += () =>
+            {
+                App.Current?.Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    UpdateSummaries();
+                    SyncIccidEditor();
+                }));
+            };
         }
 
         public void UpdateSummaries()
         {
             OnPropertyChanged(nameof(RulesSummaryText));
+            OnPropertyChanged(nameof(IccidRulesSummaryText));
             OnPropertyChanged(nameof(NodePoolSummaryText));
+        }
+
+        partial void OnSelectedIccidCardChanged(SimRouteCardOption? value)
+        {
+            OnPropertyChanged(nameof(SelectedIccidText));
+            OnPropertyChanged(nameof(SelectedIccidImsiText));
+            SyncIccidEditor();
+        }
+
+        private int _iccidCardRefreshVersion;
+
+        private void QueueIccidCardRefresh()
+        {
+            var version = Interlocked.Increment(ref _iccidCardRefreshVersion);
+            App.Current?.Dispatcher.BeginInvoke(new Action(RefreshIccidCardOptions));
+            _ = RefreshIccidCardsAfterIdentitySettlesAsync(version);
+        }
+
+        private async Task RefreshIccidCardsAfterIdentitySettlesAsync(int version)
+        {
+            await Task.Delay(500);
+            if (version != Volatile.Read(ref _iccidCardRefreshVersion)) return;
+            App.Current?.Dispatcher.BeginInvoke(new Action(RefreshIccidCardOptions));
+        }
+
+        private void RefreshIccidCardOptions()
+        {
+            var previousIccid = SelectedIccidCard?.Iccid;
+            var previousSlotId = SelectedIccidCard?.SlotId;
+            var cards = Slots
+                .Where(slot => !string.IsNullOrWhiteSpace(slot.Sim?.Iccid))
+                .Select(slot =>
+                {
+                    var sim = slot.Sim!;
+                    var operatorName = CarrierDisplayHelper.GetOperatorDisplay(sim);
+                    var cardName = !string.IsNullOrWhiteSpace(slot.CardNickname)
+                        ? slot.CardNickname!
+                        : operatorName;
+                    return new SimRouteCardOption(
+                        slot.Id,
+                        slot.Name,
+                        sim.Iccid.Trim(),
+                        sim.Imsi,
+                        cardName,
+                        ResolveCardPhoneNumber(slot),
+                        operatorName);
+                })
+                .OrderBy(card => card.SlotName, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            IccidCardOptions.Clear();
+            foreach (var card in cards) IccidCardOptions.Add(card);
+
+            // Preserve the actual card when possible. If that card disappeared
+            // during a switch, select the new card in the same module instead.
+            SelectedIccidCard = cards.FirstOrDefault(card =>
+                                    string.Equals(card.Iccid, previousIccid, StringComparison.Ordinal))
+                                ?? cards.FirstOrDefault(card =>
+                                    string.Equals(card.SlotId, previousSlotId, StringComparison.OrdinalIgnoreCase))
+                                ?? cards.FirstOrDefault();
+            OnPropertyChanged(nameof(SelectedIccidText));
+            OnPropertyChanged(nameof(SelectedIccidImsiText));
+        }
+
+        private static string ResolveCardPhoneNumber(ModemSlot slot)
+        {
+            if (!string.IsNullOrWhiteSpace(slot.Sim?.PhoneNumber))
+                return slot.Sim.PhoneNumber!;
+
+            var associatedUri = slot.VoWifiDiag?.Ims?.PAssociatedUri;
+            if (!string.IsNullOrWhiteSpace(associatedUri))
+            {
+                var match = Regex.Match(associatedUri, @"(?:tel:|sip:)(?<number>\+?[0-9]{5,15})(?:@|[;>,]|$)", RegexOptions.IgnoreCase);
+                if (match.Success) return match.Groups["number"].Value;
+            }
+
+            return "号码未提供";
+        }
+
+        private bool _isSyncingIccidEditor;
+
+        private void SyncIccidEditor()
+        {
+            if (_isSyncingIccidEditor) return;
+            _isSyncingIccidEditor = true;
+            try
+            {
+                var iccid = SelectedIccidCard?.Iccid;
+                var rule = string.IsNullOrWhiteSpace(iccid)
+                    ? null
+                    : IccidRoutes.FirstOrDefault(candidate => string.Equals(candidate.Iccid, iccid, StringComparison.Ordinal));
+                SelectedIccidRoute = rule;
+
+                if (rule == null)
+                {
+                    SelectedIccidEgress = AvailableEgressOptions.FirstOrDefault();
+                }
+                else if (rule.IsDirect)
+                {
+                    SelectedIccidEgress = AvailableEgressOptions.FirstOrDefault(option => option.IsDirect);
+                }
+                else
+                {
+                    SelectedIccidEgress = AvailableEgressOptions.FirstOrDefault(option => option.NodeId == rule.ProxyNodeId)
+                        ?? AvailableEgressOptions.FirstOrDefault(option => option.IsDirect);
+                }
+            }
+            finally
+            {
+                _isSyncingIccidEditor = false;
+            }
+        }
+
+        [RelayCommand]
+        private void SaveIccidRule()
+        {
+            var card = SelectedIccidCard;
+            if (card == null || string.IsNullOrWhiteSpace(card.Iccid))
+            {
+                StatusMessage = "请先选择已经读取到 ICCID 的 SIM 卡。";
+                return;
+            }
+
+            var liveSlot = Slots.FirstOrDefault(slot =>
+                string.Equals(slot.Id, card.SlotId, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(slot.Sim?.Iccid, card.Iccid, StringComparison.Ordinal));
+            if (liveSlot == null)
+            {
+                RefreshIccidCardOptions();
+                StatusMessage = "所选模块刚刚完成切卡，旧 ICCID 已失效；请确认新卡后再保存。";
+                return;
+            }
+
+            var selected = SelectedIccidEgress ?? AvailableEgressOptions.FirstOrDefault();
+            _kernelService.SaveIccidRoute(
+                card.Iccid,
+                selected?.NodeId,
+                card.CardName,
+                card.Imsi,
+                card.PhoneNumber == "号码未提供" ? null : card.PhoneNumber);
+            SelectedIccidRoute = IccidRoutes.FirstOrDefault(route => route.Iccid == card.Iccid);
+            StatusMessage = $"已为 [{card.CardName} · {card.PhoneNumber}] 保存 ICCID 规则：{selected?.DisplayName ?? "直连模式 (DIRECT)"}。";
+            UpdateSummaries();
+        }
+
+        [RelayCommand]
+        private async Task DeleteIccidRuleAsync(IccidRouteModel? route = null)
+        {
+            var target = route ?? SelectedIccidRoute;
+            if (target == null)
+            {
+                StatusMessage = "请选择要删除的 ICCID 规则。";
+                return;
+            }
+
+            var box = new Wpf.Ui.Controls.MessageBox
+            {
+                Title = "确认删除 ICCID 分流规则",
+                Content = $"删除 ICCID [{target.Iccid}] 的最高优先级规则后，这张卡将改为使用 IMSI MCC/PLMN 国家规则。",
+                PrimaryButtonText = "删除",
+                CloseButtonText = "取消"
+            };
+            if (await box.ShowDialogAsync() != Wpf.Ui.Controls.MessageBoxResult.Primary) return;
+
+            _kernelService.RemoveIccidRoute(target.Iccid);
+            StatusMessage = $"已删除 ICCID [{target.Iccid}] 规则；现在跟随 IMSI MCC/PLMN。";
+            SyncIccidEditor();
         }
 
         private bool _isSyncingRouteState;
@@ -384,6 +602,7 @@ namespace VoWin.ViewModels.Pages
         public void RefreshEgressOptions()
         {
             var prevSelectedId = QuickAddSelectedEgress?.NodeId;
+            var previousIccidNodeId = SelectedIccidEgress?.NodeId;
             AvailableEgressOptions.Clear();
             AvailableEgressOptions.Add(new EgressOptionModel(null, "直连模式 (DIRECT)"));
             foreach (var preset in ProxyPresets)
@@ -393,6 +612,9 @@ namespace VoWin.ViewModels.Pages
 
             QuickAddSelectedEgress = AvailableEgressOptions.FirstOrDefault(o => o.NodeId == prevSelectedId)
                                      ?? AvailableEgressOptions.FirstOrDefault();
+            SelectedIccidEgress = AvailableEgressOptions.FirstOrDefault(option => option.NodeId == previousIccidNodeId)
+                ?? AvailableEgressOptions.FirstOrDefault();
+            SyncIccidEditor();
         }
 
         private bool FilterCountryRoute(object item)
@@ -668,6 +890,11 @@ namespace VoWin.ViewModels.Pages
             }
 
             var url = p.ToProxyUrl();
+            if (!IsSupportedSocks5Proxy(url))
+            {
+                StatusMessage = "VoWiFi 仅支持 socks://、socks5:// 或 socks5h://；HTTP/HTTPS 代理无法转发 IKEv2/ESP 的 UDP。";
+                return;
+            }
             bool ok = _kernelService.SetSlotProxy(SelectedSlot.Id, url);
             if (ok)
             {
@@ -684,6 +911,11 @@ namespace VoWin.ViewModels.Pages
             if (p == null) return;
 
             var url = p.ToProxyUrl();
+            if (!IsSupportedSocks5Proxy(url))
+            {
+                StatusMessage = "VoWiFi 仅支持 SOCKS/SOCKS5；未应用 HTTP/HTTPS 节点。";
+                return;
+            }
             foreach (var slot in Slots)
             {
                 _kernelService.SetSlotProxy(slot.Id, url);
@@ -713,6 +945,11 @@ namespace VoWin.ViewModels.Pages
             if (SelectedSlot == null) return;
 
             var url = string.IsNullOrWhiteSpace(CustomProxyUrl) ? null : CustomProxyUrl.Trim();
+            if (url is not null && !IsSupportedSocks5Proxy(url))
+            {
+                StatusMessage = "仅可保存 socks://、socks5:// 或 socks5h:// 代理地址。";
+                return;
+            }
             bool ok = _kernelService.SetSlotProxy(SelectedSlot.Id, url);
             if (ok)
             {
@@ -725,7 +962,13 @@ namespace VoWin.ViewModels.Pages
         private void AddPreset()
         {
             if (string.IsNullOrWhiteSpace(NewPresetUrl)) return;
-            var node = ProxyNodeModel.FromUrl(NewPresetUrl.Trim());
+            var url = NewPresetUrl.Trim();
+            if (!IsSupportedSocks5Proxy(url))
+            {
+                StatusMessage = "只能导入 socks://、socks5:// 或 socks5h:// 节点；HTTP/HTTPS 不支持 VoWiFi。";
+                return;
+            }
+            var node = ProxyNodeModel.FromUrl(url);
             _kernelService.AddProxyPreset(node);
             NewPresetUrl = string.Empty;
             SelectedPreset = node;
@@ -742,7 +985,7 @@ namespace VoWin.ViewModels.Pages
             var uiMessageBox = new Wpf.Ui.Controls.MessageBox
             {
                 Title = "确认移除代理节点",
-                Content = $"确定要从代理池中移除节点 [{p.Name}] ({p.Url}) 吗？\n若有国家规则引用此节点，将自动回退为直连。",
+                Content = $"确定要从代理池中移除节点 [{p.Name}] ({p.Url}) 吗？\n引用此节点的 ICCID 或国家规则将显示节点缺失并安全使用直连。",
                 PrimaryButtonText = "移除",
                 CloseButtonText = "取消"
             };
@@ -869,6 +1112,13 @@ namespace VoWin.ViewModels.Pages
                 StatusMessage = "请填写完整的主机地址与有效端口。";
                 return;
             }
+            if (!NewPresetProtocol.Equals("socks", StringComparison.OrdinalIgnoreCase) &&
+                !NewPresetProtocol.Equals("socks5", StringComparison.OrdinalIgnoreCase) &&
+                !NewPresetProtocol.Equals("socks5h", StringComparison.OrdinalIgnoreCase))
+            {
+                StatusMessage = "VoWiFi 节点协议只能是 socks、socks5 或 socks5h。";
+                return;
+            }
 
             var node = new ProxyNodeModel
             {
@@ -888,5 +1138,12 @@ namespace VoWin.ViewModels.Pages
 
         [RelayCommand]
         private async Task RemovePresetAsync(ProxyNodeModel? preset) => await DeletePresetAsync(preset);
+
+        private static bool IsSupportedSocks5Proxy(string value) =>
+            Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+            (uri.Scheme.Equals("socks", StringComparison.OrdinalIgnoreCase) ||
+             uri.Scheme.Equals("socks5", StringComparison.OrdinalIgnoreCase) ||
+             uri.Scheme.Equals("socks5h", StringComparison.OrdinalIgnoreCase)) &&
+            !string.IsNullOrWhiteSpace(uri.Host) && uri.Port is > 0 and <= 65535;
     }
 }

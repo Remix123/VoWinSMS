@@ -51,7 +51,7 @@ public sealed class CSharpIkeBackend : IIkeBackend
             Socks5Client.TryParse(proxyUrl) == null)
         {
             throw new ArgumentException(
-                "VoWiFi only supports a valid socks5:// or socks5h:// proxy because ePDG requires UDP ASSOCIATE.",
+                "VoWiFi only supports a valid socks://, socks5://, or socks5h:// proxy because ePDG requires UDP ASSOCIATE.",
                 nameof(proxyUrl));
         }
 

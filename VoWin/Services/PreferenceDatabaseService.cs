@@ -121,6 +121,17 @@ namespace VoWin.Services
                         ProxyNodeId TEXT,
                         ProxyNodeName TEXT
                     );
+
+                    CREATE TABLE IF NOT EXISTS IccidRoutes (
+                        Iccid TEXT PRIMARY KEY,
+                        CardName TEXT,
+                        ImsiSnapshot TEXT,
+                        PhoneNumber TEXT,
+                        ProxyNodeId TEXT,
+                        ProxyUrl TEXT,
+                        ProxyNodeName TEXT,
+                        UpdatedAt TEXT
+                    );
                 ";
 
                 using var cmd = new SqliteCommand(sql, conn);
@@ -138,6 +149,13 @@ namespace VoWin.Services
                 {
                     using var alterCmd2 = new SqliteCommand("ALTER TABLE SimPreferences ADD COLUMN DefaultCellularData INTEGER NOT NULL DEFAULT 0;", conn);
                     await alterCmd2.ExecuteNonQueryAsync();
+                }
+                catch { }
+
+                try
+                {
+                    using var alterIccidRoutes = new SqliteCommand("ALTER TABLE IccidRoutes ADD COLUMN PhoneNumber TEXT;", conn);
+                    await alterIccidRoutes.ExecuteNonQueryAsync();
                 }
                 catch { }
 
@@ -969,6 +987,87 @@ namespace VoWin.Services
                 await conn.OpenAsync();
                 using var cmd = new SqliteCommand("DELETE FROM CountryRoutes WHERE CountryCode = @code;", conn);
                 cmd.Parameters.AddWithValue("@code", countryCode);
+                await cmd.ExecuteNonQueryAsync();
+            }
+            finally { _lock.Release(); }
+        }
+
+        public async Task SaveIccidRouteAsync(IccidRouteModel route)
+        {
+            await InitializeAsync();
+            await _lock.WaitAsync();
+            try
+            {
+                using var conn = new SqliteConnection(_connectionString);
+                await conn.OpenAsync();
+                const string sql = @"
+                    INSERT INTO IccidRoutes (Iccid, CardName, ImsiSnapshot, PhoneNumber, ProxyNodeId, ProxyUrl, ProxyNodeName, UpdatedAt)
+                    VALUES (@iccid, @name, @imsi, @phone, @nodeId, @url, @nodeName, @updated)
+                    ON CONFLICT(Iccid) DO UPDATE SET
+                        CardName = excluded.CardName,
+                        ImsiSnapshot = excluded.ImsiSnapshot,
+                        PhoneNumber = excluded.PhoneNumber,
+                        ProxyNodeId = excluded.ProxyNodeId,
+                        ProxyUrl = excluded.ProxyUrl,
+                        ProxyNodeName = excluded.ProxyNodeName,
+                        UpdatedAt = excluded.UpdatedAt;";
+                using var cmd = new SqliteCommand(sql, conn);
+                cmd.Parameters.AddWithValue("@iccid", route.Iccid);
+                cmd.Parameters.AddWithValue("@name", (object?)route.CardName ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("@imsi", (object?)route.ImsiSnapshot ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("@phone", (object?)route.PhoneNumber ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("@nodeId", (object?)route.ProxyNodeId ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("@url", (object?)route.ProxyUrl ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("@nodeName", route.ProxyNodeName);
+                cmd.Parameters.AddWithValue("@updated", route.UpdatedAt.ToUniversalTime().ToString("O"));
+                await cmd.ExecuteNonQueryAsync();
+            }
+            finally { _lock.Release(); }
+        }
+
+        public async Task<IReadOnlyList<IccidRouteModel>> GetAllIccidRoutesAsync()
+        {
+            await InitializeAsync();
+            await _lock.WaitAsync();
+            var list = new List<IccidRouteModel>();
+            try
+            {
+                using var conn = new SqliteConnection(_connectionString);
+                await conn.OpenAsync();
+                const string sql = "SELECT Iccid, CardName, ImsiSnapshot, PhoneNumber, ProxyNodeId, ProxyUrl, ProxyNodeName, UpdatedAt FROM IccidRoutes ORDER BY UpdatedAt DESC;";
+                using var cmd = new SqliteCommand(sql, conn);
+                using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    list.Add(new IccidRouteModel
+                    {
+                        Iccid = reader.GetString(0),
+                        CardName = reader.IsDBNull(1) ? null : reader.GetString(1),
+                        ImsiSnapshot = reader.IsDBNull(2) ? null : reader.GetString(2),
+                        PhoneNumber = reader.IsDBNull(3) ? null : reader.GetString(3),
+                        ProxyNodeId = reader.IsDBNull(4) ? null : reader.GetString(4),
+                        ProxyUrl = reader.IsDBNull(5) ? null : reader.GetString(5),
+                        ProxyNodeName = reader.IsDBNull(6) ? "直连模式 (Direct)" : reader.GetString(6),
+                        UpdatedAt = reader.IsDBNull(7) || !DateTime.TryParse(reader.GetString(7), out var updated)
+                            ? DateTime.MinValue
+                            : updated.ToLocalTime()
+                    });
+                }
+                return list;
+            }
+            finally { _lock.Release(); }
+        }
+
+        public async Task DeleteIccidRouteAsync(string iccid)
+        {
+            await InitializeAsync();
+            await _lock.WaitAsync();
+            try
+            {
+                using var conn = new SqliteConnection(_connectionString);
+                await conn.OpenAsync();
+                using var cmd = new SqliteCommand("DELETE FROM IccidRoutes WHERE Iccid = @iccid;", conn);
+                cmd.Parameters.AddWithValue("@iccid", iccid);
                 await cmd.ExecuteNonQueryAsync();
             }
             finally { _lock.Release(); }

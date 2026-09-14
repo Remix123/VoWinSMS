@@ -27,13 +27,14 @@ public static class CarrierDisplayHelper
         return !string.IsNullOrWhiteSpace(sim?.Mcc) ? $"MCC: {sim.Mcc}" : "--";
     }
 
-    /// <summary>Retail label reported by the live SIM, without a bundled lookup table.</summary>
+    /// <summary>
+    /// Returns the operator text reported by the modem. ICCID itself identifies
+    /// a profile, but cannot reliably establish its retail country without a
+    /// carrier database or user-supplied profile metadata.
+    /// </summary>
     public static string GetCardProfileDisplay(SimIdentity? sim)
     {
-        if (sim == null) return "未读取 SIM";
-        var country = MccCountryHelper.FindByMcc(sim.Mcc);
-        var label = GetOperatorDisplay(sim);
-        return country == null ? label : $"{label} · {country.Flag} {country.Name}";
+        return sim == null ? "未读取 SIM" : GetOperatorDisplay(sim);
     }
 
     /// <summary>Actual IMSI home PLMN used for network authentication.</summary>

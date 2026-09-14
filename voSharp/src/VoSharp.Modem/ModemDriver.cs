@@ -433,24 +433,32 @@ public class ModemDriver : IAsyncDisposable
         await _session.ExecuteCommandAsync("AT+CFUN=0", 3000, ct).ConfigureAwait(false);
         try { await Task.Delay(800, ct).ConfigureAwait(false); } catch { }
         var targetCfun = preserveFlightMode ? 4 : 1;
-        var resp = await _session.ExecuteCommandAsync($"AT+CFUN={targetCfun}", 3000, ct).ConfigureAwait(false);
+        await _session.ExecuteCommandAsync($"AT+CFUN={targetCfun}", 3000, ct).ConfigureAwait(false);
         _isRadioStateKnown = true;
         _isRadioDisabled = preserveFlightMode;
         _radioStatusReportingEnabled = !preserveFlightMode;
 
-        // Wait for CPIN: READY (up to 6s)
-        for (int i = 0; i < 12; i++)
+        // A single CPIN: READY can be the tail end of the previous eSIM
+        // profile's REFRESH. Require two consecutive observations before
+        // callers are allowed to inspect card files or start AKA.
+        var consecutiveReady = 0;
+        for (int i = 0; i < 16; i++)
         {
             try { await Task.Delay(500, ct).ConfigureAwait(false); } catch { break; }
             var cpin = await _session.ExecuteCommandAsync("AT+CPIN?", 1000, ct).ConfigureAwait(false);
             if (cpin.Success && cpin.FirstDataLine.Contains("READY"))
             {
-                _eventBus?.Publish(EventTopics.ModemSim, "Modem", "READY");
-                return true;
+                consecutiveReady++;
+                if (consecutiveReady >= 2)
+                {
+                    _eventBus?.Publish(EventTopics.ModemSim, "Modem", "READY");
+                    return true;
+                }
             }
+            else consecutiveReady = 0;
         }
 
-        return resp.Success;
+        return false;
     }
 
     public async Task<bool> SetFlightModeAsync(bool enable, CancellationToken ct = default)

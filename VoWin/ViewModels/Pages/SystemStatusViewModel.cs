@@ -76,6 +76,23 @@ namespace VoWin.ViewModels.Pages
         [ObservableProperty]
         private bool _dataRoamingSwitchEnabled;
 
+        [ObservableProperty]
+        private string _voWifiRoutingRule = "正在读取分流规则…";
+
+        [ObservableProperty]
+        private string _voWifiRoutingTarget = "--";
+
+        [ObservableProperty]
+        private string _voWifiRoutingDetail = "--";
+
+        private int _routeLoadVersion;
+        private bool _isSyncingHomeRoute;
+
+        public ObservableCollection<EgressOptionModel> HomeRouteOptions { get; } = new();
+
+        [ObservableProperty]
+        private EgressOptionModel? _selectedHomeRouteOption;
+
         public bool HasCurrentSim => !string.IsNullOrWhiteSpace(SelectedSlot?.Sim?.Iccid);
 
         partial void OnVoWifiSwitchEnabledChanged(bool value) => QueueApplySimSwitches();
@@ -202,6 +219,33 @@ namespace VoWin.ViewModels.Pages
         public string CardProfileDisplay => CarrierDisplayHelper.GetCardProfileDisplay(CurrentSim);
 
         public string ImsiHomeDisplay => CarrierDisplayHelper.GetImsiHomeDisplay(CurrentSim);
+
+        public string ImsiSourceDisplay => SelectedSlot?.ImsiIdentitySource switch
+        {
+            "EF_IMSI" => "当前来源：EF_IMSI（卡内永久身份）",
+            "AT+CIMI" => "当前来源：AT+CIMI（模组报告身份）",
+            _ => "当前来源：未知"
+        };
+
+        public string ImsiSourcesDisplay
+        {
+            get
+            {
+                var efImsi = !string.IsNullOrWhiteSpace(SelectedSlot?.LastPermanentImsi)
+                    ? SelectedSlot.LastPermanentImsi
+                    : "未读取到";
+                var cimi = !string.IsNullOrWhiteSpace(SelectedSlot?.LastReportedImsi)
+                    ? SelectedSlot.LastReportedImsi
+                    : "未读取到";
+                return $"EF_IMSI: {efImsi} · AT+CIMI: {cimi}";
+            }
+        }
+
+        public bool HasImsiIdentityConflict => SelectedSlot?.HasImsiPlmnConflict == true;
+
+        public string ImsiStabilityDisplay => HasImsiIdentityConflict
+            ? $"同一 ICCID 检测到 PLMN 变化；国家分流已锁定 MCC {SelectedSlot?.StableRoutingMcc ?? "--"}，建议设置 ICCID 专属规则"
+            : $"身份已连续确认；国家分流 MCC {SelectedSlot?.StableRoutingMcc ?? CurrentSim?.Mcc ?? "--"}";
 
         public string Imei => !string.IsNullOrWhiteSpace(SelectedSlot?.Imei) ? SelectedSlot.Imei : "--";
 
@@ -632,13 +676,36 @@ namespace VoWin.ViewModels.Pages
                         (string.IsNullOrWhiteSpace(e.SlotId) || string.Equals(e.SlotId, SelectedSlot.Id, StringComparison.OrdinalIgnoreCase)))
                     {
                         _ = LoadSimSwitchesAsync(SelectedSlot);
+                        RefreshHomeRouteOptions();
+                        _ = LoadVoWifiRouteAsync(SelectedSlot);
                     }
                 }), System.Windows.Threading.DispatcherPriority.DataBind);
             };
             _kernelService.Kernel.FlightModeChanged += (s, e) => NotifyAll();
+            _kernelService.ProxyPresets.CollectionChanged += (s, e) =>
+            {
+                App.Current?.Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    RefreshHomeRouteOptions();
+                    if (SelectedSlot != null) _ = LoadVoWifiRouteAsync(SelectedSlot);
+                }));
+            };
+            _kernelService.EgressRoutesChanged += () =>
+            {
+                App.Current?.Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    RefreshHomeRouteOptions();
+                    if (SelectedSlot != null) _ = LoadVoWifiRouteAsync(SelectedSlot);
+                }));
+            };
+
+            RefreshHomeRouteOptions();
 
             if (SelectedSlot != null)
+            {
                 _ = LoadSimSwitchesAsync(SelectedSlot);
+                _ = LoadVoWifiRouteAsync(SelectedSlot);
+            }
 
             // 1-second live heartbeat tick for real-time probe telemetry
             _heartbeatTimer = new System.Windows.Threading.DispatcherTimer
@@ -667,7 +734,123 @@ namespace VoWin.ViewModels.Pages
             NotifyAll();
             OnPropertyChanged(nameof(HasCurrentSim));
             if (value != null)
+            {
                 _ = LoadSimSwitchesAsync(value);
+                _ = LoadVoWifiRouteAsync(value);
+            }
+        }
+
+        private async Task LoadVoWifiRouteAsync(ModemSlot slot)
+        {
+            var version = Interlocked.Increment(ref _routeLoadVersion);
+            try
+            {
+                var route = await _kernelService.ResolveVoWifiRouteAsync(slot.Id);
+                if (version != Volatile.Read(ref _routeLoadVersion) || !ReferenceEquals(slot, SelectedSlot)) return;
+
+                VoWifiRoutingRule = route.RuleDisplay;
+                VoWifiRoutingTarget = route.TargetDisplay;
+                VoWifiRoutingDetail = route.Detail;
+                SyncHomeRouteSelection(slot);
+            }
+            catch (Exception ex)
+            {
+                if (version != Volatile.Read(ref _routeLoadVersion) || !ReferenceEquals(slot, SelectedSlot)) return;
+                VoWifiRoutingRule = "分流规则读取失败";
+                VoWifiRoutingTarget = "未解析";
+                VoWifiRoutingDetail = ex.Message;
+            }
+        }
+
+        private void RefreshHomeRouteOptions()
+        {
+            _isSyncingHomeRoute = true;
+            try
+            {
+                HomeRouteOptions.Clear();
+                HomeRouteOptions.Add(new EgressOptionModel(EgressOptionModel.FollowPlmnNodeId, "跟随 IMSI MCC/PLMN 国家规则"));
+                HomeRouteOptions.Add(new EgressOptionModel(null, "ICCID 规则：直连 (DIRECT)"));
+                foreach (var node in _kernelService.ProxyPresets)
+                    HomeRouteOptions.Add(new EgressOptionModel(node.Id, $"ICCID 规则：{node.Name}"));
+
+                if (SelectedSlot != null)
+                    SyncHomeRouteSelection(SelectedSlot);
+                else
+                    SelectedHomeRouteOption = HomeRouteOptions.FirstOrDefault();
+            }
+            finally
+            {
+                _isSyncingHomeRoute = false;
+            }
+        }
+
+        private void SyncHomeRouteSelection(ModemSlot slot)
+        {
+            var iccid = slot.Sim?.Iccid;
+            var rule = string.IsNullOrWhiteSpace(iccid)
+                ? null
+                : _kernelService.IccidRoutes.FirstOrDefault(candidate =>
+                    string.Equals(candidate.Iccid, iccid, StringComparison.Ordinal));
+
+            _isSyncingHomeRoute = true;
+            try
+            {
+                if (rule == null)
+                {
+                    SelectedHomeRouteOption = HomeRouteOptions.FirstOrDefault(option => option.IsFollowPlmn);
+                }
+                else if (rule.IsDirect)
+                {
+                    SelectedHomeRouteOption = HomeRouteOptions.FirstOrDefault(option => option.IsDirect);
+                }
+                else
+                {
+                    SelectedHomeRouteOption = HomeRouteOptions.FirstOrDefault(option => option.NodeId == rule.ProxyNodeId);
+                    if (SelectedHomeRouteOption == null && !string.IsNullOrWhiteSpace(rule.ProxyUrl))
+                    {
+                        var legacy = new EgressOptionModel("__LEGACY_ICCID_URL__", $"ICCID 规则：{rule.ProxyNodeName}");
+                        HomeRouteOptions.Add(legacy);
+                        SelectedHomeRouteOption = legacy;
+                    }
+                }
+            }
+            finally
+            {
+                _isSyncingHomeRoute = false;
+            }
+        }
+
+        partial void OnSelectedHomeRouteOptionChanged(EgressOptionModel? value)
+        {
+            if (_isSyncingHomeRoute || value == null) return;
+            var slot = SelectedSlot;
+            if (slot?.Sim is not { } sim || string.IsNullOrWhiteSpace(sim.Iccid))
+            {
+                StatusMessage = "当前设备尚未读取到 ICCID，无法修改卡规则。";
+                return;
+            }
+
+            if (value.IsFollowPlmn)
+            {
+                _kernelService.RemoveIccidRoute(sim.Iccid);
+                StatusMessage = "已删除 ICCID 覆盖；当前 SIM 改为跟随 IMSI MCC/PLMN 国家规则。";
+            }
+            else if (value.NodeId == "__LEGACY_ICCID_URL__")
+            {
+                return;
+            }
+            else
+            {
+                _kernelService.SaveIccidRoute(
+                    sim.Iccid,
+                    value.NodeId,
+                    slot.CardNickname ?? sim.OperatorName,
+                    sim.Imsi,
+                    sim.PhoneNumber);
+                StatusMessage = $"ICCID 路由已立即更新：{value.DisplayName}。正在使用的旧隧道需重连后切换出口。";
+            }
+
+            _ = LoadVoWifiRouteAsync(slot);
         }
 
         private async Task LoadSimSwitchesAsync(ModemSlot slot)
@@ -968,6 +1151,8 @@ namespace VoWin.ViewModels.Pages
             {
                 await _kernelService.RefreshMetricsAsync();
                 NotifyAll();
+                if (SelectedSlot != null)
+                    await LoadVoWifiRouteAsync(SelectedSlot);
                 StatusMessage = "遥测指标刷新完成。";
             }
             catch (Exception ex)

@@ -37,5 +37,8 @@ namespace VoWin.Services
         Task SaveCountryRouteAsync(CountryRouteModel route);
         Task<IReadOnlyList<CountryRouteModel>> GetAllCountryRoutesAsync();
         Task DeleteCountryRouteAsync(string countryCode);
+        Task SaveIccidRouteAsync(IccidRouteModel route);
+        Task<IReadOnlyList<IccidRouteModel>> GetAllIccidRoutesAsync();
+        Task DeleteIccidRouteAsync(string iccid);
     }
 }

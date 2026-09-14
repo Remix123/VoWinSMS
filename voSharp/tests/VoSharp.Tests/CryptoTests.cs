@@ -74,7 +74,7 @@ public class CryptoTests
         var autn = HexUtils.FromHexString("55f328b43577b9b94a9ffac354dfafb3");
 
         var apdu = HardwareAka.BuildAuthenticateApdu(rand, autn);
-        Assert.Equal(39, apdu.Length);
+        Assert.Equal(40, apdu.Length);
         Assert.Equal(0x00, apdu[0]);
         Assert.Equal(0x88, apdu[1]);
 

@@ -414,11 +414,11 @@
 
                 <!-- Header Badges -->
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                  <!-- Retail card-profile country; a hosted IMSI may differ. -->
+                  <!-- The modem-reported carrier and the IMSI home PLMN are shown separately. -->
                   <Border Margin="0,0,6,0" Padding="8,3" Background="{DynamicResource AppInputBrush}" CornerRadius="6">
-                    <TextBlock FontSize="11" FontWeight="SemiBold" ToolTip="仅用于展示根据 ICCID / 卡配置识别的卡品牌，不会改写 IMSI、PLMN 或网络鉴权参数。">
-                      <Run Text="SIM 卡：" />
-                      <Run Text="{Binding CardProfileDisplay, Mode=OneWay}" />
+                    <TextBlock FontSize="11" FontWeight="SemiBold" ToolTip="归属网络按 IMSI 的 MCC/PLMN 识别。ICCID 只用于识别同一张卡并读取其专属偏好，不能单独判断零售归属地。">
+                      <Run Text="IMSI 归属：" />
+                      <Run Text="{Binding ImsiHomeDisplay, Mode=OneWay}" />
                     </TextBlock>
                   </Border>
                   <!-- Roaming Badge -->
@@ -459,9 +459,9 @@
                   <TextBlock FontSize="11" Foreground="{DynamicResource AppTextTertiaryBrush}" Margin="0,2,0,0" Text="4G / 5G 蜂窝数据" />
                 </StackPanel>
 
-                <!-- 3. Retail carrier / card profile -->
+                <!-- 3. Carrier text reported by the SIM/modem -->
                 <StackPanel Grid.Column="2" Margin="4,0,8,0">
-                  <TextBlock FontSize="11" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="卡配置运营商（ICCID）" />
+                  <TextBlock FontSize="11" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="SIM 报告运营商（CSPN）" />
                   <TextBlock FontSize="15" FontWeight="Bold" Margin="0,3,0,0" TextTrimming="CharacterEllipsis" Text="{Binding OperatorName, Mode=OneWay}" />
                   <TextBlock FontSize="11" Foreground="{DynamicResource AppTextTertiaryBrush}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis">
                     <Run Text="IMSI 认证归属：" /><Run Text="{Binding ImsiHomeDisplay, Mode=OneWay}" />
@@ -475,6 +475,35 @@
                   <TextBlock FontSize="11" Foreground="{DynamicResource AppTextTertiaryBrush}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" Text="{Binding PhoneNumberDetail, Mode=OneWay}" ToolTip="{Binding PhoneNumberDetail, Mode=OneWay}" />
                 </StackPanel>
               </Grid>
+
+              <!-- Exact VoWiFi egress decision. Its source is shown so a multi-IMSI
+                   card's retail country is never confused with the country rule. -->
+              <Border Margin="0,8,0,0" Padding="10,8" Background="{DynamicResource AppInputBrush}" CornerRadius="8">
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="280" />
+                  </Grid.ColumnDefinitions>
+                  <ui:SymbolIcon Grid.Column="0" Symbol="Globe24" FontSize="16" Foreground="{DynamicResource AppAccentBrush}" Margin="0,1,8,0" VerticalAlignment="Top" />
+                  <StackPanel Grid.Column="1">
+                    <TextBlock FontSize="11" FontWeight="SemiBold" Text="VoWiFi 分流（启动时实际优先级）" />
+                    <TextBlock FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource AppTextPrimaryBrush}" Margin="0,2,0,0" Text="{Binding VoWifiRoutingRule, Mode=OneWay}" TextTrimming="CharacterEllipsis" ToolTip="{Binding VoWifiRoutingRule, Mode=OneWay}" />
+                    <TextBlock FontSize="11" Foreground="{DynamicResource AppAccentBrush}" Margin="0,1,0,0" Text="{Binding VoWifiRoutingTarget, Mode=OneWay}" TextTrimming="CharacterEllipsis" ToolTip="{Binding VoWifiRoutingTarget, Mode=OneWay}" />
+                    <TextBlock FontSize="10" Foreground="{DynamicResource AppTextTertiaryBrush}" Margin="0,2,0,0" Text="{Binding VoWifiRoutingDetail, Mode=OneWay}" TextWrapping="Wrap" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="2" Margin="14,0,0,0" VerticalAlignment="Center">
+                    <TextBlock FontSize="10" Foreground="{DynamicResource AppTextSecondaryBrush}" Margin="2,0,0,3" Text="当前 SIM 的 ICCID 覆盖" />
+                    <ComboBox
+                      ItemsSource="{Binding HomeRouteOptions}"
+                      SelectedItem="{Binding SelectedHomeRouteOption, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                      DisplayMemberPath="DisplayName"
+                      Padding="8,5"
+                      ToolTip="选择后立即保存；跟随 PLMN 会删除该 ICCID 的最高优先级规则"
+                    />
+                  </StackPanel>
+                </Grid>
+              </Border>
 
               <!-- Toggle Button for Collapsible Device Details -->
               <Grid Margin="0,4,0,0">
@@ -510,9 +539,8 @@
 
                   <!-- Row 0: ICCID, IMSI, IMEI -->
                   <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,8,8">
-                    <TextBlock FontSize="10" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="SIM 识别码 (ICCID) · 卡配置归属" />
+                    <TextBlock FontSize="10" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="SIM 识别码 (ICCID) · 用于识别卡片与读取偏好" />
                     <TextBlock FontSize="11" FontFamily="Consolas" FontWeight="SemiBold" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" Text="{Binding Iccid, Mode=OneWay}" />
-                    <TextBlock FontSize="10" Foreground="{DynamicResource AppTextTertiaryBrush}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" Text="{Binding CardProfileDisplay, Mode=OneWay}" />
                     <TextBlock FontSize="10" Foreground="{DynamicResource AppAccentBrush}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis">
                       <Run Text="卡片别名：" /><Run Text="{Binding CardNicknameDisplay, Mode=OneWay}" />
                     </TextBlock>
@@ -522,6 +550,9 @@
                     <TextBlock FontSize="10" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="国际移动用户识别码 (IMSI) · 认证归属" />
                     <TextBlock FontSize="11" FontFamily="Consolas" FontWeight="SemiBold" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" Text="{Binding Imsi, Mode=OneWay}" />
                     <TextBlock FontSize="10" Foreground="{DynamicResource AppTextTertiaryBrush}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" Text="{Binding ImsiHomeDisplay, Mode=OneWay}" />
+                    <TextBlock FontSize="10" Foreground="{DynamicResource AppTextTertiaryBrush}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" Text="{Binding ImsiSourceDisplay, Mode=OneWay}" />
+                    <TextBlock FontSize="10" Foreground="{DynamicResource AppTextTertiaryBrush}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" Text="{Binding ImsiSourcesDisplay, Mode=OneWay}" ToolTip="{Binding ImsiSourcesDisplay, Mode=OneWay}" />
+                    <TextBlock FontSize="10" Foreground="{DynamicResource AppWarningBrush}" Margin="0,2,0,0" TextWrapping="Wrap" Text="{Binding ImsiStabilityDisplay, Mode=OneWay}" ToolTip="{Binding ImsiStabilityDisplay, Mode=OneWay}" />
                   </StackPanel>
 
                   <StackPanel Grid.Row="0" Grid.Column="2" Margin="4,0,0,8">

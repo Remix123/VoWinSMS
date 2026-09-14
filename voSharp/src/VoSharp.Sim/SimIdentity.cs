@@ -8,7 +8,11 @@ public record SimIdentity(
     string OperatorName,
     string? PhoneNumber = null,
     bool IsHomePlmnAuthoritative = false,
-    IReadOnlyList<string>? HomePlmns = null
+    IReadOnlyList<string>? HomePlmns = null,
+    string? ReportedImsi = null,
+    string? PermanentImsi = null,
+    string ImsiSource = "unknown",
+    bool HasPlmnConflict = false
 )
 {
     public static SimIdentity FromImsiAndIccid(
@@ -17,7 +21,11 @@ public record SimIdentity(
         string? opName = null,
         string? phoneNumber = null,
         int? mncLength = null,
-        IReadOnlyList<string>? homePlmns = null)
+        IReadOnlyList<string>? homePlmns = null,
+        string? reportedImsi = null,
+        string? permanentImsi = null,
+        string? imsiSource = null,
+        bool hasPlmnConflict = false)
     {
         imsi = imsi.Trim();
         iccid = iccid.Trim();
@@ -37,6 +45,10 @@ public record SimIdentity(
             operatorName,
             phoneNumber,
             IsHomePlmnAuthoritative: mncLength is 2 or 3,
-            HomePlmns: homePlmns?.Distinct(StringComparer.Ordinal).ToArray());
+            HomePlmns: homePlmns?.Distinct(StringComparer.Ordinal).ToArray(),
+            ReportedImsi: string.IsNullOrWhiteSpace(reportedImsi) ? null : reportedImsi.Trim(),
+            PermanentImsi: string.IsNullOrWhiteSpace(permanentImsi) ? null : permanentImsi.Trim(),
+            ImsiSource: string.IsNullOrWhiteSpace(imsiSource) ? "unknown" : imsiSource.Trim(),
+            HasPlmnConflict: hasPlmnConflict);
     }
 }

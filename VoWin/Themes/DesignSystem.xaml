@@ -37,6 +37,12 @@
     <SolidColorBrush x:Key="AppInfoBrush" Color="#0284C7" />
     <SolidColorBrush x:Key="AppInfoSoftBrush" Color="#E8F6FD" />
 
+    <!-- Non-text visual tokens used by page-level effects and QR previews. -->
+    <SolidColorBrush x:Key="AppQrSurfaceBrush" Color="#FFFFFF" />
+    <Color x:Key="AppShadowColor">#000000</Color>
+    <Color x:Key="AppSuccessShadowColor">#16A34A</Color>
+    <Color x:Key="AppDangerShadowColor">#DC2626</Color>
+
     <!-- Floating call/SMS alerts intentionally remain dark in both themes so
          they are immediately recognizable above arbitrary desktop content. -->
     <SolidColorBrush x:Key="AppFloatingSurfaceBrush" Color="#F2141D2C" />

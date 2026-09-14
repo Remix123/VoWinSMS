@@ -36,10 +36,10 @@ public class AkaTests
     {
         var apdu = HardwareAka.BuildAuthenticateApdu(Rand, Autn);
 
-        // 00 88 00 81 22 | 10 <RAND 16B> 10 <AUTN 16B>
+        // 00 88 00 81 22 | 10 <RAND 16B> 10 <AUTN 16B> | Le=00
         Assert.Equal("0088008122" +
                      "10" + Convert.ToHexString(Rand) +
-                     "10" + Convert.ToHexString(Autn),
+                     "10" + Convert.ToHexString(Autn) + "00",
             Convert.ToHexString(apdu));
     }
 
@@ -209,7 +209,9 @@ public class AkaTests
     {
         var modem = new ScriptedAtSession();
         modem.On("AT+CCHO=", "ERROR");                     // both AIDs rejected
-        modem.OnCsim(_ => $"+CSIM: {SuccessHex().Length},\"{SuccessHex()}\"\r\nOK");
+        modem.OnCsim(command => command[1] == 0xA4
+            ? "+CSIM: 4,\"9000\"\r\nOK"
+            : $"+CSIM: {SuccessHex().Length},\"{SuccessHex()}\"\r\nOK");
 
         var provider = new Ec25AkaProvider(modem);
         var result = await provider.AuthenticateAsync(AkaChallenge.Create(Rand, Autn));
@@ -217,7 +219,26 @@ public class AkaTests
         Assert.True(result.Success);
         Assert.Equal(Convert.ToHexString(Res), Convert.ToHexString(result.Res!));
         Assert.Contains(modem.Executed, c => c.StartsWith("AT+CSIM=", StringComparison.Ordinal));
+        Assert.Contains(modem.CsimCommands, command => command[1] == 0xA4);
         Assert.DoesNotContain(modem.Executed, c => c.StartsWith("AT+CGLA=", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Ec25Retries6985LogicalChannelOnSelectedBasicChannel()
+    {
+        var modem = new ScriptedAtSession();
+        modem.On("AT+CCHO=\"A0000000871002\"", "+CCHO: 1\r\nOK");
+        modem.OnCgla(1, _ => "+CGLA: 4,\"6985\"\r\nOK");
+        modem.On("AT+CCHC=1", "OK");
+        modem.OnCsim(command => command[1] == 0xA4
+            ? "+CSIM: 4,\"9000\"\r\nOK"
+            : $"+CSIM: {SuccessHex().Length},\"{SuccessHex()}\"\r\nOK");
+
+        var result = await new Ec25AkaProvider(modem).AuthenticateAsync(AkaChallenge.Create(Rand, Autn));
+
+        Assert.True(result.Success);
+        Assert.Contains("basic-channel CSIM fallback", result.DiagnosticMessage!, StringComparison.Ordinal);
+        Assert.Contains(modem.CsimCommands, command => command[1] == 0xA4);
     }
 
     [Fact]
@@ -225,7 +246,9 @@ public class AkaTests
     {
         var modem = new ScriptedAtSession();
         modem.On("AT+CCHO=", "ERROR");
-        modem.OnCsim(_ => "+CSIM: 4,\"9862\"\r\nOK");
+        modem.OnCsim(command => command[1] == 0xA4
+            ? "+CSIM: 4,\"9000\"\r\nOK"
+            : "+CSIM: 4,\"9862\"\r\nOK");
 
         var provider = new Ec25AkaProvider(modem);
         var result = await provider.AuthenticateAsync(AkaChallenge.Create(Rand, Autn));
@@ -239,7 +262,7 @@ public class AkaTests
     {
         var modem = new ScriptedAtSession();
         modem.On("AT+CPIN?", "+CPIN: READY\r\nOK");
-        modem.On("AT+QCCID", "+QCCID: 89860123456789012345\r\nOK");
+        ConfigureEfIccidRead(modem, "98681032547698103254", allowUsimSelect: true);
 
         var provider = new Ec25AkaProvider(modem);
 
@@ -251,11 +274,57 @@ public class AkaTests
     {
         var modem = new ScriptedAtSession();
         modem.On("AT+CPIN?", "+CPIN: READY\r\nOK");
-        modem.On("AT+QCCID", "+QCCID: 89860123456789012345\r\nOK");
+        ConfigureEfIccidRead(modem, "98681032547698103254", allowUsimSelect: true);
 
         var provider = new Ec25AkaProvider(modem);
 
         Assert.True(await provider.CheckReadyAsync(expectedIccid: "89860123456789012345"));
+    }
+
+    [Fact]
+    public async Task ReadIccidFromCardUsesEfIccidAndRestoresMasterFile()
+    {
+        var modem = new ScriptedAtSession();
+        ConfigureEfIccidRead(modem, "98681032547698103254");
+
+        var iccid = await new Ec25AkaProvider(modem).ReadIccidFromCardAsync();
+
+        Assert.Equal("89860123456789012345", iccid);
+        Assert.Contains(modem.CsimCommands,
+            command => Convert.ToHexString(command) == "00A40004023F00");
+    }
+
+    [Fact]
+    public async Task PostSwitchReadinessRejectsCachedIccidWhenEfIccidDiffers()
+    {
+        var modem = new ScriptedAtSession();
+        modem.On("AT+CPIN?", "+CPIN: READY\r\nOK");
+        modem.On("AT+QCCID", "+QCCID: 89860000000000000001\r\nOK");
+        ConfigureEfIccidRead(modem, "98681032547698103254");
+
+        var result = await new Ec25AkaProvider(modem)
+            .VerifyPostProfileSwitchReadyAsync("89860000000000000001");
+
+        Assert.False(result.Ready);
+        Assert.Equal("89860123456789012345", result.CardIccid);
+        Assert.Contains("does not match", result.Failure!, StringComparison.Ordinal);
+        Assert.DoesNotContain(modem.Executed, command => command.StartsWith("AT+QCCID", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task PostSwitchReadinessRequiresBothCardIdentityAndUsimSelection()
+    {
+        var modem = new ScriptedAtSession();
+        modem.On("AT+CPIN?", "+CPIN: READY\r\nOK");
+        ConfigureEfIccidRead(modem, "98681032547698103254", allowUsimSelect: true);
+
+        var result = await new Ec25AkaProvider(modem)
+            .VerifyPostProfileSwitchReadyAsync("89860123456789012345");
+
+        Assert.True(result.Ready);
+        Assert.Equal("89860123456789012345", result.CardIccid);
+        Assert.Contains(modem.CsimCommands,
+            command => command[1] == 0xA4 && command[2] == 0x04 && command[3] == 0x04);
     }
 
     [Fact]
@@ -308,6 +377,21 @@ public class AkaTests
     private static byte[] FromHex(string body, string sw = "9000") =>
         Convert.FromHexString(body + sw);
 
+    private static void ConfigureEfIccidRead(ScriptedAtSession modem, string bcdIccid, bool allowUsimSelect = false)
+    {
+        modem.OnCsim(command =>
+        {
+            var hex = Convert.ToHexString(command);
+            return hex is "00A4080C022FE2" or "00A40804022FE2" or "00A40004023F00"
+                ? "+CSIM: 4,\"9000\"\r\nOK"
+                : hex == "00B000000A"
+                    ? $"+CSIM: 24,\"{bcdIccid}9000\"\r\nOK"
+                    : allowUsimSelect && command[1] == 0xA4 && command[2] == 0x04 && command[3] == 0x04
+                        ? "+CSIM: 4,\"9000\"\r\nOK"
+                    : "ERROR";
+        });
+    }
+
     /// <summary>Builds a BER-TLV tagged response: &lt;tag&gt;&lt;totalLen&gt;&lt;body&gt;&lt;SW&gt;.</summary>
     private static byte[] Tagged(string tag, string body, string sw = "9000") =>
         FromHex(tag + (body.Length / 2).ToString("X2") + body, sw);
@@ -322,6 +406,7 @@ public class AkaTests
         public bool IsOpen => true;
         public List<string> Executed { get; } = new();
         public List<byte[]> CglaCommands { get; } = new();
+        public List<byte[]> CsimCommands { get; } = new();
 
         public void On(string prefix, string response) => _exact.Add((prefix, response));
 
@@ -343,7 +428,11 @@ public class AkaTests
                 return Reply(_cgla(Convert.FromHexString(command.Split('"')[1])));
 
             if (command.StartsWith("AT+CSIM=", StringComparison.Ordinal) && _csim is not null)
-                return Reply(_csim(Convert.FromHexString(command.Split('"')[1])));
+            {
+                var apdu = Convert.FromHexString(command.Split('"')[1]);
+                CsimCommands.Add(apdu);
+                return Reply(_csim(apdu));
+            }
 
             foreach (var (match, response) in _exact)
             {

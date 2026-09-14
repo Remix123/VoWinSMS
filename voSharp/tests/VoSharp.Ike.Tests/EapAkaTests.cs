@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Text;
 using VoSharp.Common.Aka;
@@ -184,6 +185,11 @@ public class EapAkaTests
         Assert.Equal(AkaSubtype.AuthenticationReject, parsed.Data[0]);
         Assert.Contains(diagnostics, line => line.Contains("success=False", StringComparison.Ordinal));
         Assert.DoesNotContain(diagnostics, line => line.Contains("RES is unavailable", StringComparison.Ordinal));
+
+        var failure = EapAkaClient.MarshalEapPacket(new EapPacket(EapCode.Failure, 3, 0, Array.Empty<byte>()));
+        var exception = await Assert.ThrowsAsync<AuthenticationException>(() => client.HandleAsync(failure));
+        Assert.Contains("local failure", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("USIM authentication command", exception.Message, StringComparison.Ordinal);
     }
 
     private sealed class FailedAkaProvider : IAkaProvider

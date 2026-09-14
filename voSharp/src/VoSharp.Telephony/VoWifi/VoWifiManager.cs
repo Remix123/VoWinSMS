@@ -375,7 +375,7 @@ public class VoWifiManager : IDisposable
             {
                 using var parsedProxy = Socks5Client.TryParse(effectiveProxy)
                     ?? throw new ArgumentException(
-                        "VoWiFi requires a valid socks5:// or socks5h:// proxy; HTTP proxies cannot relay IKEv2/ESP UDP.",
+                    "VoWiFi requires a valid socks://, socks5://, or socks5h:// proxy; HTTP proxies cannot relay IKEv2/ESP UDP.",
                         nameof(proxyUrl));
                 EventBus?.Publish(EventTopics.SystemLog, "VoWiFi",
                     $"Using SOCKS5 UDP proxy {parsedProxy.ProxyHost}:{parsedProxy.ProxyPort} for ePDG and ESP.");
@@ -1242,6 +1242,9 @@ public class VoWifiManager : IDisposable
     {
         if (state == VoWifiState.ResolvingEpdg)
         {
+            if (error.Contains("socks5://", StringComparison.OrdinalIgnoreCase) ||
+                error.Contains("HTTP proxies cannot relay", StringComparison.OrdinalIgnoreCase))
+                return "proxy protocol rejected (SOCKS5 UDP required)";
             if (error.Contains("no addresses", StringComparison.OrdinalIgnoreCase) || error.Contains("DNS", StringComparison.OrdinalIgnoreCase))
                 return "DNS/ePDG discovery";
             if (error.Contains("USIM modem", StringComparison.OrdinalIgnoreCase) || error.Contains("ICCID", StringComparison.OrdinalIgnoreCase))

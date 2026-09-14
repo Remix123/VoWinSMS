@@ -187,14 +187,14 @@
                     Width="40"
                     Height="40"
                     CornerRadius="20"
-                    Background="{Binding AvatarColor, FallbackValue='#2563EB'}"
+                    Background="{Binding AvatarColor}"
                     Margin="0,0,10,0"
                     VerticalAlignment="Center"
                   >
                     <TextBlock
                       FontSize="16"
                       FontWeight="SemiBold"
-                      Foreground="White"
+                      Foreground="{DynamicResource AppTextOnAccentBrush}"
                       HorizontalAlignment="Center"
                       VerticalAlignment="Center"
                       Text="{Binding RemotePartyInitial}"
@@ -239,7 +239,7 @@
                       <TextBlock
                         FontSize="10"
                         FontWeight="Bold"
-                        Foreground="White"
+                        Foreground="{DynamicResource AppTextOnAccentBrush}"
                         Text="{Binding UnreadCount}"
                       />
                     </Border>
@@ -287,14 +287,14 @@
                   Width="38"
                   Height="38"
                   CornerRadius="19"
-                  Background="{Binding SelectedConversation.AvatarColor, FallbackValue='#2563EB'}"
+                  Background="{Binding SelectedConversation.AvatarColor}"
                   Margin="0,0,12,0"
                   VerticalAlignment="Center"
                 >
                   <TextBlock
                     FontSize="16"
                     FontWeight="SemiBold"
-                    Foreground="White"
+                    Foreground="{DynamicResource AppTextOnAccentBrush}"
                     HorizontalAlignment="Center"
                     VerticalAlignment="Center"
                     Text="{Binding SelectedConversation.RemotePartyInitial}"
@@ -668,7 +668,7 @@
                             x:Name="sendIcon"
                             Symbol="Send24"
                             FontSize="18"
-                            Foreground="White"
+                            Foreground="{DynamicResource AppTextOnAccentBrush}"
                             Margin="2,0,0,0"
                             HorizontalAlignment="Center"
                             VerticalAlignment="Center"
@@ -677,7 +677,7 @@
                             x:Name="sendSpinner"
                             Width="18"
                             Height="18"
-                            Foreground="White"
+                            Foreground="{DynamicResource AppTextOnAccentBrush}"
                             IsIndeterminate="True"
                             Visibility="Collapsed"
                             HorizontalAlignment="Center"

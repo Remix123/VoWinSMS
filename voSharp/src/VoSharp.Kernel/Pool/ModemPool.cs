@@ -233,14 +233,32 @@ public class ModemPool : IAsyncDisposable
     {
         if (_slots.TryGetValue(slotId, out var slot))
         {
-            slot.ProxyUrl = proxyUrl;
-            slot.VoWifi.ProxyUrl = proxyUrl;
-            _eventBus.Publish("pool.slot.proxy_updated", "ModemPool", new { SlotId = slotId, ProxyUrl = proxyUrl ?? "direct" });
+            var normalized = string.IsNullOrWhiteSpace(proxyUrl) ||
+                             proxyUrl.Equals("direct", StringComparison.OrdinalIgnoreCase)
+                ? null
+                : proxyUrl.Trim();
+            if (normalized is not null && !IsValidSocks5Proxy(normalized))
+            {
+                _eventBus.Publish(EventTopics.SystemError, "ModemPool",
+                    $"Rejected non-SOCKS proxy for slot {slotId}. VoWiFi requires socks://, socks5://, or socks5h:// because IKEv2 uses UDP ASSOCIATE.");
+                return false;
+            }
+
+            slot.ProxyUrl = normalized;
+            slot.VoWifi.ProxyUrl = normalized;
+            _eventBus.Publish("pool.slot.proxy_updated", "ModemPool", new { SlotId = slotId, ProxyUrl = normalized ?? "direct" });
             return true;
         }
 
         return false;
     }
+
+    private static bool IsValidSocks5Proxy(string value) =>
+        Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+        (uri.Scheme.Equals("socks", StringComparison.OrdinalIgnoreCase) ||
+         uri.Scheme.Equals("socks5", StringComparison.OrdinalIgnoreCase) ||
+         uri.Scheme.Equals("socks5h", StringComparison.OrdinalIgnoreCase)) &&
+        !string.IsNullOrWhiteSpace(uri.Host) && uri.Port is > 0 and <= 65535;
 
     public async Task<IReadOnlyList<ModemSlot>> DiscoverAndEnrichAsync(CancellationToken ct = default)
     {

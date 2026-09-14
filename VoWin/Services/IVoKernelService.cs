@@ -21,6 +21,7 @@ namespace VoWin.Services
         ObservableCollection<SmsConversationModel> Conversations { get; }
         ObservableCollection<CallRecordModel> CallHistory { get; }
         ObservableCollection<ProxyNodeModel> ProxyPresets { get; }
+        ObservableCollection<IccidRouteModel> IccidRoutes { get; }
         ObservableCollection<LogEntryModel> Logs { get; }
         bool IsInitialScanRunning { get; }
         string InitialScanStatus { get; }
@@ -46,6 +47,7 @@ namespace VoWin.Services
         event Action<string>? CallMediaStatusChanged;
         event Action<SmsMessageModel>? IncomingSmsReceived;
         event Action<string, string?>? IncomingCallReceived;
+        event Action? EgressRoutesChanged;
         Task<CallExperienceSettings> GetCallExperienceSettingsAsync();
         Task SaveCallExperienceSettingsAsync(CallExperienceSettings settings);
 
@@ -84,6 +86,7 @@ namespace VoWin.Services
         Task<string> BuildImsDiagnosticReportAsync(string? slotId = null);
 
         // eSIM / eUICC
+        Task<EuiccProbeResult> ProbeEuiccAsync(string? slotId = null, CancellationToken cancellationToken = default);
         Task<IReadOnlyList<Profile>> GetEuiccProfilesAsync(string? slotId = null);
         Task<bool> SwitchEuiccProfileAsync(string iccidOrAid, string? slotId = null);
         Task<bool> DisableEuiccProfileAsync(string iccidOrAid, string? slotId = null);
@@ -99,8 +102,11 @@ namespace VoWin.Services
         void RemoveProxyPreset(string nodeId);
 
         ObservableCollection<CountryRouteModel> CountryRoutes { get; }
+        void SaveIccidRoute(string iccid, string? proxyNodeId, string? cardName = null, string? imsi = null, string? phoneNumber = null);
+        void RemoveIccidRoute(string iccid);
         void SaveCountryRoute(string countryCode, string? proxyNodeId);
         void RemoveCountryRoute(string countryCode);
         string? ResolveEgressProxyForSlot(string slotId);
+        Task<VoWifiRouteDecision> ResolveVoWifiRouteAsync(string? slotId = null);
     }
 }

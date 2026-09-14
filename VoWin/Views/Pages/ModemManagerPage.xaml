@@ -24,11 +24,87 @@
     <converters:CountToVisibilityConverter x:Key="CountToVis" />
     <converters:CountToVisibilityConverter x:Key="InvertCountToVis" Invert="True" />
 
-    <Style TargetType="TabItem">
+    <Style TargetType="{x:Type TabControl}">
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="{x:Type TabControl}">
+            <Grid ClipToBounds="False">
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+              </Grid.RowDefinitions>
+              <TabPanel
+                x:Name="HeaderPanel"
+                Grid.Row="0"
+                IsItemsHost="True"
+                Panel.ZIndex="1"
+                Background="Transparent"
+              />
+              <Border
+                Grid.Row="1"
+                Background="{TemplateBinding Background}"
+                BorderBrush="{TemplateBinding BorderBrush}"
+                BorderThickness="{TemplateBinding BorderThickness}"
+              >
+                <ContentPresenter
+                  x:Name="PART_SelectedContentHost"
+                  ContentSource="SelectedContent"
+                  ContentTemplate="{TemplateBinding SelectedContentTemplate}"
+                  ContentStringFormat="{TemplateBinding SelectedContentStringFormat}"
+                  ContentTemplateSelector="{TemplateBinding SelectedContentTemplateSelector}"
+                  HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                  VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                />
+              </Border>
+            </Grid>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style TargetType="{x:Type TabItem}">
       <Setter Property="FontSize" Value="13" />
       <Setter Property="FontWeight" Value="SemiBold" />
       <Setter Property="Padding" Value="14,8" />
+      <Setter Property="Margin" Value="0,0,8,0" />
       <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Foreground" Value="{DynamicResource AppTextSecondaryBrush}" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="{x:Type TabItem}">
+            <Border x:Name="TabSurface"
+                    Margin="0,0,20,0"
+                    Padding="{TemplateBinding Padding}"
+                    Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}"
+                    CornerRadius="8">
+              <ContentPresenter
+                ContentSource="Header"
+                HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                RecognizesAccessKey="True"
+                TextElement.Foreground="{TemplateBinding Foreground}"
+              />
+            </Border>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+      <Style.Triggers>
+        <Trigger Property="IsMouseOver" Value="True">
+          <Setter Property="Foreground" Value="{DynamicResource AppTextPrimaryBrush}" />
+          <Setter Property="Background" Value="{DynamicResource AppHoverBrush}" />
+        </Trigger>
+        <Trigger Property="IsSelected" Value="True">
+          <Setter Property="Foreground" Value="{DynamicResource AppAccentBrush}" />
+          <Setter Property="Background" Value="{DynamicResource AppSelectedBrush}" />
+          <Setter Property="BorderBrush" Value="{DynamicResource AppAccentSoftBorderBrush}" />
+          <Setter Property="Panel.ZIndex" Value="1" />
+        </Trigger>
+      </Style.Triggers>
     </Style>
   </Page.Resources>
 
@@ -619,7 +695,7 @@
               </TabItem>
 
               <!-- ================= TAB 2: IMS / VoWiFi (4-Stage Chain & Key-Value Matrix) ================= -->
-              <TabItem Header="IMS / VoWiFi">
+              <TabItem Header="IMS / VoWiFi" Width="auto">
                 <ScrollViewer Margin="0,10,0,0" VerticalScrollBarVisibility="Auto">
                   <StackPanel>
 
@@ -853,23 +929,28 @@
                 <Grid Margin="0,10,0,0">
                   <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                   </Grid.RowDefinitions>
 
                   <!-- eSIM Header Toolbar -->
                   <Border Grid.Row="0" Background="{DynamicResource AppInputBrush}" BorderBrush="{DynamicResource AppCardBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,0,0,10">
-                    <Grid>
+                    <StackPanel>
                       <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                         <ui:Button Appearance="Primary" Command="{Binding LoadEuiccDataCommand}" Content="读取 eUICC 芯片" Icon="{ui:SymbolIcon Symbol=Sim24}" Margin="0,0,16,0" />
                         <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="芯片 EID: " />
                         <TextBlock VerticalAlignment="Center" FontFamily="Consolas" FontWeight="SemiBold" Text="{Binding EuiccEid, Mode=OneWay}" />
                       </StackPanel>
-                    </Grid>
+                      <TextBlock Margin="0,7,0,0" Text="{Binding EuiccSupportMessage}" TextWrapping="Wrap"
+                                 FontSize="11" Foreground="{DynamicResource AppTextSecondaryBrush}" />
+                    </StackPanel>
                   </Border>
 
-                  <!-- Verified eSIM download -->
-                  <Border Grid.Row="1" Background="{DynamicResource AppInputBrush}" BorderBrush="{DynamicResource AppCardBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="14,12" Margin="0,0,0,10">
+                  <!-- Keep profile management and profile writing independent.  A
+                       normal SIM can still be probed from the header, but cannot
+                       enter either operation tab. -->
+                  <TabControl Grid.Row="1">
+                    <TabItem Header="下载与写入">
+                    <Border Background="{DynamicResource AppInputBrush}" BorderBrush="{DynamicResource AppCardBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="14,12" Margin="0,10,0,0">
                     <StackPanel>
                       <Grid>
                         <Grid.ColumnDefinitions>
@@ -972,12 +1053,36 @@
                         </Grid>
                       </Border>
                       <TextBlock Text="开始运营商认证后不可取消；结果不确定时会锁定该激活码，禁止直接重试。" Margin="0,6,0,0"
-                                 FontSize="10" Foreground="{DynamicResource SystemFillColorCautionBrush}" />
+                                 FontSize="10" Foreground="{DynamicResource AppWarningBrush}" />
                     </StackPanel>
                   </Border>
+                    </TabItem>
 
-                  <!-- Profiles List -->
-                  <ListBox Grid.Row="2" ItemsSource="{Binding EuiccProfiles}" SelectedItem="{Binding SelectedProfile}" BorderThickness="0" Background="Transparent" ScrollViewer.CanContentScroll="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                    <TabItem Header="已安装的配置文件">
+                      <Grid Margin="0,10,0,0">
+                        <Grid.RowDefinitions>
+                          <RowDefinition Height="Auto" />
+                          <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <Border Grid.Row="0" Background="{DynamicResource AppInputBrush}" BorderBrush="{DynamicResource AppCardBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,0,0,8">
+                          <Grid>
+                            <Grid.ColumnDefinitions>
+                              <ColumnDefinition Width="*" />
+                              <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                              <TextBlock Text="已安装的 eSIM Profile" FontSize="14" FontWeight="SemiBold" />
+                              <TextBlock Margin="0,3,0,0" FontSize="11" Foreground="{DynamicResource AppTextSecondaryBrush}">
+                                <Run Text="已读取 " /><Run Text="{Binding EuiccProfiles.Count, Mode=OneWay}" /><Run Text=" 个 Profile；选择后可启用或禁用。" />
+                              </TextBlock>
+                            </StackPanel>
+                            <ui:Button Grid.Column="1" Appearance="Secondary" Command="{Binding LoadEuiccDataCommand}" Content="刷新列表" />
+                          </Grid>
+                        </Border>
+
+                  <!-- Bounded ListBox keeps the profile cards scrollable even
+                       when the page is hosted inside a larger layout. -->
+                  <ListBox Grid.Row="1" MaxHeight="520" ItemsSource="{Binding EuiccProfiles}" SelectedItem="{Binding SelectedProfile}" BorderThickness="0" Background="Transparent" ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.CanContentScroll="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
                     <ListBox.ItemTemplate>
                       <DataTemplate>
                         <Border Padding="12,10" Margin="0,3" CornerRadius="8" Background="{DynamicResource AppInputBrush}" BorderBrush="{DynamicResource AppCardBorderBrush}" BorderThickness="1">
@@ -1016,6 +1121,9 @@
                       </DataTemplate>
                     </ListBox.ItemTemplate>
                   </ListBox>
+                      </Grid>
+                    </TabItem>
+                  </TabControl>
                 </Grid>
               </TabItem>
 
