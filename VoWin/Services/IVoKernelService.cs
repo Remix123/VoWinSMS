@@ -88,12 +88,12 @@ namespace VoWin.Services
         // eSIM / eUICC
         Task<EuiccProbeResult> ProbeEuiccAsync(string? slotId = null, CancellationToken cancellationToken = default);
         Task<IReadOnlyList<Profile>> GetEuiccProfilesAsync(string? slotId = null);
-        Task<bool> SwitchEuiccProfileAsync(string iccidOrAid, string? slotId = null);
-        Task<bool> DisableEuiccProfileAsync(string iccidOrAid, string? slotId = null);
-        Task<bool> DeleteEuiccProfileAsync(string iccidOrAid, string? slotId = null);
-        Task<bool> RenameEuiccProfileAsync(string iccidOrAid, string nickname, string? slotId = null);
+        Task<bool> SwitchEuiccProfileAsync(string iccidOrAid, string? slotId = null, string? euiccAid = null);
+        Task<bool> DisableEuiccProfileAsync(string iccidOrAid, string? slotId = null, string? euiccAid = null);
+        Task<bool> DeleteEuiccProfileAsync(string iccidOrAid, string? slotId = null, string? euiccAid = null);
+        Task<bool> RenameEuiccProfileAsync(string iccidOrAid, string nickname, string? slotId = null, string? euiccAid = null);
         Task<string> GetEuiccEidAsync(string? slotId = null);
-        Task<EuiccDownloadResult> DownloadEuiccProfileAsync(string activationCode, string? confirmationCode = null, IProgress<EuiccDownloadProgress>? progress = null, string? slotId = null, CancellationToken cancellationToken = default, bool allowUntrustedTls = false, bool allowRetryAfterUncertain = false);
+        Task<EuiccDownloadResult> DownloadEuiccProfileAsync(string activationCode, string? confirmationCode = null, IProgress<EuiccDownloadProgress>? progress = null, string? slotId = null, CancellationToken cancellationToken = default, bool allowUntrustedTls = false, bool allowRetryAfterUncertain = false, string? euiccAid = null);
 
         // Proxy & Country Dispatch Routing
         bool SetSlotProxy(string slotId, string? proxyUrl);

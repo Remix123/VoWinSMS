@@ -87,6 +87,7 @@ namespace VoWin.ViewModels.Pages
         private string _voWifiRoutingDetail = "--";
 
         private int _routeLoadVersion;
+        private int _simRouteSyncVersion;
         private bool _isSyncingHomeRoute;
 
         public ObservableCollection<EgressOptionModel> HomeRouteOptions { get; } = new();
@@ -276,7 +277,9 @@ namespace VoWin.ViewModels.Pages
 
         public string RoamingText => IsRoaming ? "国际/异网漫游" : "归属地直连";
 
-        public string FlightModeText => (SelectedSlot?.IsFlightMode == true) ? "飞行模式 (射频关闭)" : "射频激活 (在线)";
+        public string FlightModeText => SelectedSlot?.IsPcscReader == true
+            ? "PC/SC（无蜂窝控制）"
+            : (SelectedSlot?.IsFlightMode == true) ? "飞行模式 (射频关闭)" : "射频激活 (在线)";
 
         public string SignalEvaluation => SignalBars switch
         {
@@ -673,13 +676,29 @@ namespace VoWin.ViewModels.Pages
                 NotifyAll();
                 App.Current?.Dispatcher.BeginInvoke(new Action(() =>
                 {
-                    if (SelectedSlot != null &&
-                        (string.IsNullOrWhiteSpace(e.SlotId) || string.Equals(e.SlotId, SelectedSlot.Id, StringComparison.OrdinalIgnoreCase)))
+                    if (SelectedSlot == null ||
+                        (!string.IsNullOrWhiteSpace(e.SlotId) && !string.Equals(e.SlotId, SelectedSlot.Id, StringComparison.OrdinalIgnoreCase)))
+                        return;
+
+                    // Every SIM transition invalidates any pending work for
+                    // the previous card, including a delayed READY handler.
+                    var simRouteVersion = Interlocked.Increment(ref _simRouteSyncVersion);
+
+                    if (e.Sim == null || !e.State.Equals("READY", StringComparison.OrdinalIgnoreCase))
                     {
-                        _ = LoadSimSwitchesAsync(SelectedSlot);
-                        RefreshHomeRouteOptions();
-                        _ = LoadVoWifiRouteAsync(SelectedSlot);
+                        // Do not leave the previous card's ICCID rule visible
+                        // while a physical SIM/eSIM profile is being replaced.
+                        _isSyncingHomeRoute = true;
+                        try { SelectedHomeRouteOption = null; }
+                        finally { _isSyncingHomeRoute = false; }
+                        VoWifiRoutingRule = "正在确认新 SIM 卡…";
+                        VoWifiRoutingTarget = "暂不使用上一张卡的分流规则";
+                        VoWifiRoutingDetail = "等待 ICCID 与 IMSI 稳定后自动重新解析。";
+                        return;
                     }
+
+                    _ = SynchronizeRouteForChangedSimAsync(SelectedSlot, e.Sim.Iccid,
+                        simRouteVersion);
                 }), System.Windows.Threading.DispatcherPriority.DataBind);
             };
             _kernelService.Kernel.FlightModeChanged += (s, e) => NotifyAll();
@@ -760,6 +779,48 @@ namespace VoWin.ViewModels.Pages
                 VoWifiRoutingRule = "分流规则读取失败";
                 VoWifiRoutingTarget = "未解析";
                 VoWifiRoutingDetail = ex.Message;
+            }
+        }
+
+        private async Task SynchronizeRouteForChangedSimAsync(ModemSlot slot, string expectedIccid, int version)
+        {
+            // The modem may produce a late READY event while another profile
+            // has already been selected. Only the exact, currently live ICCID
+            // may update the home-page selector or the kernel route.
+            await Task.Yield();
+            if (version != Volatile.Read(ref _simRouteSyncVersion) ||
+                !ReferenceEquals(slot, SelectedSlot) ||
+                !string.Equals(slot.Sim?.Iccid, expectedIccid, StringComparison.Ordinal))
+                return;
+
+            await LoadSimSwitchesAsync(slot);
+            if (version != Volatile.Read(ref _simRouteSyncVersion) ||
+                !ReferenceEquals(slot, SelectedSlot) ||
+                !string.Equals(slot.Sim?.Iccid, expectedIccid, StringComparison.Ordinal))
+                return;
+
+            RefreshHomeRouteOptions();
+            var effectiveProxy = _kernelService.ResolveEgressProxyForSlot(slot.Id);
+            if (_kernelService.SetSlotProxy(slot.Id, effectiveProxy))
+            {
+                slot.ProxyUrl = effectiveProxy;
+            }
+            else
+            {
+                // A saved non-SOCKS endpoint must not inherit the previous
+                // SIM's proxy. The kernel falls back to explicit direct UDP.
+                _kernelService.SetSlotProxy(slot.Id, null);
+                slot.ProxyUrl = null;
+                StatusMessage = "新 SIM 的代理规则无效，已安全切换为直连 UDP。";
+            }
+
+            await LoadVoWifiRouteAsync(slot);
+            if (version == Volatile.Read(ref _simRouteSyncVersion) &&
+                ReferenceEquals(slot, SelectedSlot) &&
+                string.Equals(slot.Sim?.Iccid, expectedIccid, StringComparison.Ordinal))
+            {
+                StatusMessage = "已按新 SIM 的 ICCID/PLMN 规则更新 VoWiFi 分流。";
+                NotifyAll();
             }
         }
 
@@ -973,7 +1034,20 @@ namespace VoWin.ViewModels.Pages
             {
                 if (!ReferenceEquals(slot, SelectedSlot)) return;
 
-                if (slot.IsFlightMode != FlightModeSwitchEnabled)
+                // A PC/SC reader has no baseband. Its SIM can still start
+                // VoWiFi and use IMS calls/SMS, but it cannot apply CFUN,
+                // CGATT, or roaming AT commands. Keep those saved values
+                // deterministic and never issue unsupported controls.
+                if (slot.IsPcscReader)
+                {
+                    _isLoadingSimSwitches = true;
+                    FlightModeSwitchEnabled = false;
+                    CellularDataSwitchEnabled = false;
+                    DataRoamingSwitchEnabled = false;
+                    _isLoadingSimSwitches = false;
+                }
+
+                if (!slot.IsPcscReader && slot.IsFlightMode != FlightModeSwitchEnabled)
                 {
                     StatusMessage = FlightModeSwitchEnabled ? "正在开启飞行模式并确认模组状态..." : "正在关闭飞行模式并确认模组状态...";
                     var flightApplied = await _kernelService.SetFlightModeAsync(FlightModeSwitchEnabled, slot.Id);
@@ -990,7 +1064,7 @@ namespace VoWin.ViewModels.Pages
                     }
                 }
 
-                if (!FlightModeSwitchEnabled)
+                if (!slot.IsPcscReader && !FlightModeSwitchEnabled)
                 {
                     var roamingApplied = await slot.SetDataRoamingEnabledAsync(DataRoamingSwitchEnabled);
                     var cellularDataApplied = await slot.SetCellularDataEnabledAsync(CellularDataSwitchEnabled);

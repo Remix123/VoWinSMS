@@ -47,42 +47,38 @@ public class AtModemEuiccTransport : IEuiccTransport
             int channel = openResp[0];
             if (channel > 0)
             {
-                // Try candidate AIDs (Standard GSMA, XeSIM, eSTK.me 0, eSTK.me 1, GSMA Test)
-                var candidateAids = new List<string> { aid, "A0000005591010FFFFFFFF8900000177", "A06573746B6D65FFFF4953442D522030", "A06573746B6D65FFFF4953442D522031", "A0000005591010FFFFFFFF8900000101" };
-
-                foreach (var targetAid in candidateAids.Distinct(StringComparer.OrdinalIgnoreCase))
+                // The caller owns AID discovery.  Falling through to another
+                // ISD-R here would make a multi-eUICC card look selectable
+                // while silently operating on a different storage.
+                try
                 {
-                    try
-                    {
-                        var aidBytes = HexUtils.FromHexString(targetAid);
-                        var selectApdu = new List<byte> { EncodeLogicalChannelCla(0x00, channel), 0xA4, 0x04, 0x00, (byte)aidBytes.Length };
-                        selectApdu.AddRange(aidBytes);
+                    var aidBytes = HexUtils.FromHexString(aid);
+                    var selectApdu = new List<byte> { EncodeLogicalChannelCla(0x00, channel), 0xA4, 0x04, 0x00, (byte)aidBytes.Length };
+                    selectApdu.AddRange(aidBytes);
 
-                        var selectResp = await _modem.SendCsimApduAsync(selectApdu.ToArray(), ct).ConfigureAwait(false);
-                        if (selectResp.Length >= 2)
+                    var selectResp = await _modem.SendCsimApduAsync(selectApdu.ToArray(), ct).ConfigureAwait(false);
+                    if (selectResp.Length >= 2)
+                    {
+                        int selectSw = (selectResp[^2] << 8) | selectResp[^1];
+                        if (selectSw == 0x9000 || (selectSw >> 8) == 0x61)
                         {
-                            int selectSw = (selectResp[^2] << 8) | selectResp[^1];
-                            if (selectSw == 0x9000 || (selectSw >> 8) == 0x61)
+                            if ((selectSw >> 8) == 0x61)
                             {
-                                if ((selectSw >> 8) == 0x61)
+                                try
                                 {
-                                    // Drain FCP
-                                    try
-                                    {
-                                        var getResp = new byte[] { EncodeLogicalChannelCla(0x80, channel), 0xC0, 0x00, 0x00, (byte)(selectSw & 0xFF) };
-                                        await _modem.SendCsimApduAsync(getResp, ct).ConfigureAwait(false);
-                                    }
-                                    catch { }
+                                    var getResp = new byte[] { EncodeLogicalChannelCla(0x80, channel), 0xC0, 0x00, 0x00, (byte)(selectSw & 0xFF) };
+                                    await _modem.SendCsimApduAsync(getResp, ct).ConfigureAwait(false);
                                 }
-                                _useCcho = false;
-                                return channel;
+                                catch { }
                             }
+                            _useCcho = false;
+                            return channel;
                         }
                     }
-                    catch { }
                 }
+                catch { }
 
-                // Close channel if SELECT ISD-R failed on all candidate AIDs
+                // Close the channel when this explicitly requested AID cannot be selected.
                 try
                 {
                     await _modem.SendCsimApduAsync(new byte[] { 0x00, 0x70, 0x80, (byte)channel, 0x00 }, ct).ConfigureAwait(false);

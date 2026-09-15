@@ -363,7 +363,9 @@
                       <TextBlock FontWeight="SemiBold" Text="飞行模式" />
                       <TextBlock FontSize="11" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="关闭蜂窝射频（CFUN=4）" TextWrapping="Wrap" />
                     </StackPanel>
-                    <ui:ToggleSwitch HorizontalAlignment="Right" VerticalAlignment="Top" IsChecked="{Binding FlightModeSwitchEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                    <ui:ToggleSwitch HorizontalAlignment="Right" VerticalAlignment="Top" IsChecked="{Binding FlightModeSwitchEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                     IsEnabled="{Binding SelectedSlot.SupportsCellularControls}"
+                                     ToolTip="仅蜂窝模组支持；PC/SC 读卡器没有蜂窝射频" />
                   </Grid>
                 </Border>
 
@@ -373,7 +375,9 @@
                       <TextBlock FontWeight="SemiBold" Text="蜂窝数据" />
                       <TextBlock FontSize="11" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="控制 PS 域移动数据附着" TextWrapping="Wrap" />
                     </StackPanel>
-                    <ui:ToggleSwitch HorizontalAlignment="Right" VerticalAlignment="Top" IsChecked="{Binding CellularDataSwitchEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                    <ui:ToggleSwitch HorizontalAlignment="Right" VerticalAlignment="Top" IsChecked="{Binding CellularDataSwitchEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                     IsEnabled="{Binding SelectedSlot.SupportsCellularControls}"
+                                     ToolTip="仅蜂窝模组支持；PC/SC 读卡器没有蜂窝射频" />
                   </Grid>
                 </Border>
 
@@ -383,7 +387,9 @@
                       <TextBlock FontWeight="SemiBold" Text="数据漫游" />
                       <TextBlock FontSize="11" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="允许漫游网络使用数据" TextWrapping="Wrap" />
                     </StackPanel>
-                    <ui:ToggleSwitch HorizontalAlignment="Right" VerticalAlignment="Top" IsChecked="{Binding DataRoamingSwitchEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                    <ui:ToggleSwitch HorizontalAlignment="Right" VerticalAlignment="Top" IsChecked="{Binding DataRoamingSwitchEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                     IsEnabled="{Binding SelectedSlot.SupportsCellularControls}"
+                                     ToolTip="仅蜂窝模组支持；PC/SC 读卡器没有蜂窝射频" />
                   </Grid>
                 </Border>
               </Grid>

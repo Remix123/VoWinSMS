@@ -105,51 +105,64 @@ public class Sgp22Client
         return resTlv;
     }
 
-    public async Task<string> GetEIDAsync(CancellationToken ct = default)
+    /// <summary>
+    /// Reads every 16-byte EID returned by the currently addressable eUICC
+    /// application. Standard cards return exactly one. Some physical eSIM
+    /// adapters expose more than one eUICC identity in their response, so a
+    /// caller must not silently discard all but the first one.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> GetEidsAsync(CancellationToken ct = default)
     {
-        // 1. GSMA SGP.22 ES10c GetEuiccData (BF3E) requesting tag 5A (EID)
-        // Request: BF 3E 03 5C 01 5A
+        var eids = new List<string>();
+
+        void Collect(Tlv response)
+        {
+            foreach (var eidTlv in response.FindAllRecursive(TagEID))
+            {
+                // ICCIDs also use tag 5A, but an EID is exactly 16 bytes.
+                // Keeping this check prevents a profile ICCID nested in a
+                // vendor response from being presented as a second chip.
+                if (eidTlv.Value.Length != 16) continue;
+                var eid = eidTlv.HexValue().ToUpperInvariant();
+                if (!eids.Contains(eid, StringComparer.Ordinal)) eids.Add(eid);
+            }
+        }
+
+        // Query all standard sources. Apart from providing resilient fallback
+        // behaviour, this lets diagnostics retain a vendor's additional EID
+        // instead of returning at the first successful response.
         try
         {
             var req = new Tlv(0xBF3E);
             req.Children.Add(new Tlv(0x5C, new byte[] { 0x5A }));
             var resp = await TransmitCommandAsync(req, ct).ConfigureAwait(false);
-            var eidTlv = resp.FindFirstRecursive(TagEID);
-            if (eidTlv != null && eidTlv.Value.Length > 0)
-            {
-                return eidTlv.HexValue().ToUpperInvariant();
-            }
+            Collect(resp);
         }
         catch { }
 
-        // 2. Fallback: GetEuiccInfo1 (BF20)
         try
         {
             var req1 = new Tlv(TagGetEuiccInfo1);
             var resp1 = await TransmitCommandAsync(req1, ct).ConfigureAwait(false);
-            var eidTlv = resp1.FindFirstRecursive(TagEID);
-            if (eidTlv != null && eidTlv.Value.Length > 0)
-            {
-                return eidTlv.HexValue().ToUpperInvariant();
-            }
+            Collect(resp1);
         }
         catch { }
 
-        // 3. Fallback: GetEuiccInfo2 (BF22)
         try
         {
             var req2 = new Tlv(TagGetEuiccInfo2);
             var resp2 = await TransmitCommandAsync(req2, ct).ConfigureAwait(false);
-            var eidTlv = resp2.FindFirstRecursive(TagEID);
-            if (eidTlv != null && eidTlv.Value.Length > 0)
-            {
-                return eidTlv.HexValue().ToUpperInvariant();
-            }
+            Collect(resp2);
         }
         catch { }
 
+        if (eids.Count > 0) return eids;
         throw new InvalidOperationException("未找到卡片 EID (卡片可能未返回 5A 标签或使用定制指令)");
     }
+
+    /// <summary>Compatibility helper for callers that can operate only on the current eUICC.</summary>
+    public async Task<string> GetEIDAsync(CancellationToken ct = default) =>
+        (await GetEidsAsync(ct).ConfigureAwait(false))[0];
 
     public async Task<List<Profile>> GetProfilesInfoAsync(CancellationToken ct = default)
     {
@@ -175,8 +188,21 @@ public class Sgp22Client
         {
             var p = new Profile();
 
+            // A normal SGP.22 response represents one eUICC and has no EID in
+            // E3. Some dual-eUICC physical adapters include an EID here; retain
+            // it instead of flattening all profiles into an unlabelled list.
+            p.Eid = entry.FindAllRecursive(TagEID)
+                .FirstOrDefault(tlv => tlv.Value.Length == 16)
+                ?.HexValue()
+                .ToUpperInvariant();
+
             // ICCID (5A)
-            if (entry.FindFirstRecursive(TagICCID) is { } iccidTlv && iccidTlv.Value.Length > 0)
+            // EID and ICCID both use 5A in different response contexts. In a
+            // vendor dual-EID profile entry, prefer the non-16-byte value so
+            // the EID can never be mistaken for a 32-digit ICCID.
+            var iccidTlv = entry.FindAllRecursive(TagICCID)
+                .FirstOrDefault(tlv => tlv.Value.Length > 0 && tlv.Value.Length != 16);
+            if (iccidTlv != null)
             {
                 p.ICCID = Tlv.BcdToIccid(iccidTlv.Value);
             }

@@ -15,6 +15,23 @@ public enum ProfileClass
 
 public class Profile
 {
+    /// <summary>ISD-R application AID that owns this profile. Required on multi-eUICC cards.</summary>
+    public string? EuiccAid { get; set; }
+
+    /// <summary>
+    /// Owning eUICC identity when the card exposes it alongside profile data.
+    /// Standard single-eUICC responses omit this; dual-EID adapters may include
+    /// a 16-byte 5A value in each profile container.
+    /// </summary>
+    public string? Eid { get; set; }
+
+    /// <summary>
+    /// Only profiles on the currently addressed eUICC may receive ES10
+    /// mutations. The UI uses this to prevent a dual-EID card from appearing
+    /// to switch a profile on an inaccessible chip.
+    /// </summary>
+    public bool IsCurrentlyAddressable { get; set; } = true;
+
     public string ICCID { get; set; } = string.Empty;
     public string ISDPAID { get; set; } = string.Empty;
     public ProfileState State { get; set; } = ProfileState.Disabled;
@@ -29,8 +46,18 @@ public class Profile
     {
         var name = !string.IsNullOrWhiteSpace(Nickname) ? Nickname : (!string.IsNullOrWhiteSpace(ProfileName) ? ProfileName : "Unnamed");
         var sp = !string.IsNullOrWhiteSpace(ServiceProviderName) ? $" ({ServiceProviderName})" : "";
-        return $"[{State}] ICCID={ICCID} | {name}{sp}";
+        var eid = string.IsNullOrWhiteSpace(Eid) ? string.Empty : $" | EID={Eid}";
+        return $"[{State}] ICCID={ICCID} | {name}{sp}{eid}";
     }
+}
+
+/// <summary>
+/// One independently selectable eUICC storage.  EID alone identifies the chip,
+/// whereas ES10 operations must select its ISD-R AID before changing profiles.
+/// </summary>
+public sealed record EuiccInventoryEntry(string Eid, string Aid, IReadOnlyList<Profile> Profiles)
+{
+    public string DisplayName => $"EID …{(Eid.Length > 4 ? Eid[^4..] : Eid)} · ISD-R …{(Aid.Length > 4 ? Aid[^4..] : Aid)}";
 }
 
 public class EuiccInfo

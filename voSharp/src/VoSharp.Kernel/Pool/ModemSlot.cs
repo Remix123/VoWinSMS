@@ -44,9 +44,16 @@ public sealed record EuiccProbeResult(
     EuiccCapability Capability,
     string? Eid,
     IReadOnlyList<Profile> Profiles,
-    string Message)
+    string Message,
+    IReadOnlyList<string>? Eids = null,
+    IReadOnlyList<EuiccInventoryEntry>? Inventory = null)
 {
     public bool IsSupported => Capability == EuiccCapability.Supported;
+    public IReadOnlyList<string> DetectedEids => Inventory is { Count: > 0 }
+        ? Inventory.Select(entry => entry.Eid).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
+        : Eids is { Count: > 0 }
+        ? Eids
+        : string.IsNullOrWhiteSpace(Eid) ? Array.Empty<string>() : [Eid];
 }
 
 /// <summary>
@@ -138,6 +145,38 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
     public event EventHandler<SmsStatusReportEventArgs>? SmsStatusReportReceived;
 
     public ModemDriver? Modem { get; private set; }
+
+    /// <summary>True when this slot is a Windows PC/SC smart-card reader rather than an AT modem.</summary>
+    public bool IsPcscReader { get; private set; }
+
+    /// <summary>The Windows reader name for a PC/SC-only VoWiFi slot.</summary>
+    public string? PcscReaderName { get; private set; }
+
+    /// <summary>
+    /// PC/SC readers have no cellular radio controls. Once IMS is registered,
+    /// calls and SMS continue over the VoWiFi SIP/IPsec data plane as normal.
+    /// </summary>
+    public bool IsVoWifiOnly => IsPcscReader;
+    public bool SupportsAtCommands => !IsPcscReader;
+    public bool SupportsCellularControls => !IsPcscReader;
+
+    private string? _voWifiImei;
+    /// <summary>
+    /// Genuine terminal IMEI to send for a PC/SC card's IMS registration. It is
+    /// deliberately separate from <see cref="Imei"/>, which belongs to an AT modem.
+    /// </summary>
+    public string? VoWifiImei
+    {
+        get => _voWifiImei;
+        set
+        {
+            var normalized = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+            if (_voWifiImei == normalized) return;
+            _voWifiImei = normalized;
+            VoWifi.DeviceImei = normalized;
+            OnPropertyChanged();
+        }
+    }
 
     private EuiccCapability _euiccCapability = EuiccCapability.Unknown;
     public EuiccCapability EuiccCapability
@@ -420,6 +459,54 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
         {
             RaiseIncomingCall(new IncomingCallEventArgs(e.CallId, e.CallerNumber, e.DisplayName, e.IsVoWifi, e.Timestamp, Id));
         };
+    }
+
+    /// <summary>
+    /// Attaches a SIM exposed through Windows PC/SC as a VoWiFi-only slot.  No
+    /// serial modem is involved: the card itself supplies IMSI/ICCID and AKA.
+    /// </summary>
+    public async Task<bool> AttachPcscAsync(string readerName, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(readerName);
+        ct.ThrowIfCancellationRequested();
+
+        try
+        {
+            if (Aka is IDisposable oldProvider)
+                oldProvider.Dispose();
+
+            var pcsc = new PcscAkaProvider(readerName);
+            var iccid = await pcsc.ReadIccidAsync(ct).ConfigureAwait(false);
+            var imsi = await pcsc.ReadImsiAsync(ct).ConfigureAwait(false);
+
+            if (!await pcsc.CheckReadyAsync(iccid, ct).ConfigureAwait(false))
+            {
+                pcsc.Dispose();
+                throw new InvalidOperationException("PC/SC reader found a card, but ADF.USIM is not available.");
+            }
+
+            Aka = pcsc;
+            IsPcscReader = true;
+            PcscReaderName = readerName;
+            PortName = $"PC/SC · {readerName}";
+            VoWifi.Modem = null;
+            VoWifi.AkaProvider = pcsc;
+            VoWifi.DeviceImei = VoWifiImei;
+            Sim = SimIdentity.FromImsiAndIccid(imsi, iccid, opName: $"PLMN {imsi[..3]}-{imsi.Substring(3, 2)}", imsiSource: "PC/SC EF.IMSI");
+            LastSeen = DateTime.UtcNow;
+            SetState(SlotState.Online);
+            try { SimChanged?.Invoke(this, new SimStateChangedEventArgs(Sim, 1, "READY", Id)); } catch { }
+            _eventBus.Publish(EventTopics.SystemLog, "PC/SC",
+                $"Slot {Id}: reader '{readerName}' ready; EF.ICCID/EF.IMSI verified; VoWiFi-only mode.");
+            return true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            IsPcscReader = true;
+            PcscReaderName = readerName;
+            SetError($"PC/SC reader '{readerName}' is unavailable or has no usable USIM: {ex.Message}");
+            return false;
+        }
     }
 
     private void SetState(SlotState newState)
@@ -793,6 +880,19 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
     /// </summary>
     public async Task DetachHardwareAsync(CancellationToken ct = default)
     {
+        if (IsPcscReader)
+        {
+            if (Aka is IDisposable pcsc)
+                pcsc.Dispose();
+            Aka = SoftwareAkaProvider.FromTestVectors();
+            VoWifi.AkaProvider = null;
+            VoWifi.NotifyModemDetached();
+            Sim = null;
+            SetState(SlotState.Offline);
+            _eventBus.Publish(EventTopics.SystemLog, "PC/SC", $"Slot {Id} reader detached; VoWiFi is blocked until the card is reinserted.");
+            return;
+        }
+
         var modem = Modem;
         if (modem == null && State == SlotState.Offline)
             return;
@@ -823,6 +923,14 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
     /// </summary>
     public async Task RefreshMetricsAsync(CancellationToken ct = default)
     {
+        if (IsPcscReader)
+        {
+            if (Aka is not PcscAkaProvider pcsc || !await pcsc.CheckReadyAsync(Sim?.Iccid, ct).ConfigureAwait(false))
+                await DetachHardwareAsync(ct).ConfigureAwait(false);
+            else
+                LastSeen = DateTime.UtcNow;
+            return;
+        }
         if (Modem == null || !Modem.IsOpen) return;
         if (Calls.ActiveCall != null) return; // avoid baseband collision during call
 
@@ -848,6 +956,20 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
     /// </summary>
     public async Task RefreshSimAsync(CancellationToken ct = default)
     {
+        if (IsPcscReader)
+        {
+            if (Aka is not PcscAkaProvider pcsc)
+            {
+                SetState(SlotState.Offline);
+                return;
+            }
+            var iccid = await pcsc.ReadIccidAsync(ct).ConfigureAwait(false);
+            var imsi = await pcsc.ReadImsiAsync(ct).ConfigureAwait(false);
+            Sim = SimIdentity.FromImsiAndIccid(imsi, iccid, opName: $"PLMN {imsi[..3]}-{imsi.Substring(3, 2)}", imsiSource: "PC/SC EF.IMSI");
+            LastSeen = DateTime.UtcNow;
+            try { SimChanged?.Invoke(this, new SimStateChangedEventArgs(Sim, 1, "READY", Id)); } catch { }
+            return;
+        }
         if (Modem == null || !Modem.IsOpen) return;
 
         try
@@ -965,6 +1087,8 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
             throw new InvalidOperationException($"Slot {Id} has no active SIM identity after the readiness check.");
 
         VoWifi.ProxyUrl = ProxyUrl;
+        VoWifi.AkaProvider = Aka;
+        VoWifi.DeviceImei = VoWifiImei;
         if (!await Aka.CheckReadyAsync(Sim.Iccid, ct).ConfigureAwait(false))
             throw new InvalidOperationException(
                 $"Slot {Id} live USIM does not match the refreshed VoWiFi identity. Registration was blocked before EAP-AKA.");
@@ -1371,6 +1495,8 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
     /// </summary>
     public async Task<bool> SetFlightModeAsync(bool enabled, CancellationToken ct = default)
     {
+        if (IsPcscReader)
+            throw new InvalidOperationException("PC/SC 读卡器没有蜂窝射频，无法切换飞行模式。");
         if (Modem == null || !Modem.IsOpen) return false;
         bool ok = await Modem.SetFlightModeAsync(enabled, ct).ConfigureAwait(false);
         if (ok)
@@ -1394,6 +1520,8 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
     /// </summary>
     public async Task<bool> SetCellularDataEnabledAsync(bool enabled, CancellationToken ct = default)
     {
+        if (IsPcscReader)
+            throw new NotSupportedException("PC/SC 卡槽没有蜂窝数据附着功能。");
         if (Modem == null || !Modem.IsOpen || IsFlightMode) return false;
         var response = await Modem.SendRawAtCommandAsync(
             $"AT+CGATT={(enabled ? 1 : 0)}", 10000, ct).ConfigureAwait(false);
@@ -1407,6 +1535,8 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
     /// </summary>
     public async Task<bool> SetDataRoamingEnabledAsync(bool enabled, CancellationToken ct = default)
     {
+        if (IsPcscReader)
+            throw new NotSupportedException("PC/SC 卡槽没有蜂窝漫游控制功能。");
         if (Modem == null || !Modem.IsOpen || IsFlightMode) return false;
         var value = enabled ? 1 : 0;
         var qcfg = await Modem.SendRawAtCommandAsync(
@@ -1427,6 +1557,8 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
     /// </summary>
     public async Task<string> SendUssdAsync(string code, int timeoutMs = 15000, CancellationToken ct = default)
     {
+        if (IsPcscReader)
+            throw new NotSupportedException("PC/SC 卡槽不支持 USSD；仅支持 USIM/eSIM 操作和已注册 VoWiFi 的 IMS 通话、短信。");
         if (Modem == null || !Modem.IsOpen) return "Modem 未就绪。";
         var resp = await Modem.SendRawAtCommandAsync($"AT+CUSD=1,\"{code}\",15", timeoutMs, ct).ConfigureAwait(false);
         if (resp.Success)
@@ -1443,6 +1575,8 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
     /// </summary>
     public async Task<bool> RebootAsync(CancellationToken ct = default)
     {
+        if (IsPcscReader)
+            throw new NotSupportedException("PC/SC 卡槽没有可重启的蜂窝模组。");
         if (Modem == null || !Modem.IsOpen) return false;
         var resp = await Modem.SendRawAtCommandAsync("AT+CFUN=1,1", 5000, ct).ConfigureAwait(false);
         return resp.Success;
@@ -1455,23 +1589,31 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
     public EuiccManager? GetOrCreateEuiccManager()
     {
         if (_euicc != null) return _euicc;
-        if (Modem == null) return null;
-        _euicc = new EuiccManager(new AtModemEuiccTransport(Modem), _eventBus);
+        if (IsPcscReader && !string.IsNullOrWhiteSpace(PcscReaderName))
+        {
+            _euicc = new EuiccManager(new PcscEuiccTransport(readerName: PcscReaderName), _eventBus);
+        }
+        else if (Modem != null)
+        {
+            _euicc = new EuiccManager(new AtModemEuiccTransport(Modem), _eventBus);
+        }
         return _euicc;
     }
 
     public async Task<string> GetEuiccEidAsync(CancellationToken ct = default)
     {
         var mgr = GetOrCreateEuiccManager();
-        if (mgr == null) throw new InvalidOperationException("当前卡槽模组未就绪或串口未打开。");
-        return await mgr.GetEIDAsync(ct).ConfigureAwait(false);
+        if (mgr == null) throw new InvalidOperationException("当前卡槽未就绪，无法访问 eUICC 芯片。");
+        var inventory = await mgr.GetInventoryAsync(ct).ConfigureAwait(false);
+        return inventory.First().Eid;
     }
 
     public async Task<IReadOnlyList<Profile>> GetEuiccProfilesAsync(CancellationToken ct = default)
     {
         var mgr = GetOrCreateEuiccManager();
         if (mgr == null) return Array.Empty<Profile>();
-        return await mgr.ListProfilesAsync(ct).ConfigureAwait(false);
+        var inventory = await mgr.GetInventoryAsync(ct).ConfigureAwait(false);
+        return inventory.SelectMany(entry => entry.Profiles).ToArray();
     }
 
     /// <summary>
@@ -1487,13 +1629,17 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
             SetEuiccCapability(EuiccCapability.Probing, "正在读取 eUICC 芯片…", log: false);
 
             var mgr = GetOrCreateEuiccManager();
-            if (mgr == null || Modem == null || !Modem.IsOpen)
+            var pcscReady = IsPcscReader && Aka is PcscAkaProvider pcsc &&
+                await pcsc.CheckReadyAsync(Sim?.Iccid, ct).ConfigureAwait(false);
+            if (mgr == null || (!pcscReady && (Modem == null || !Modem.IsOpen)))
             {
-                const string message = "模组尚未就绪，暂时无法检测 eUICC 芯片。";
+                const string message = "卡槽尚未就绪，暂时无法检测 eUICC 芯片。";
                 return CompleteEuiccProbe(EuiccCapability.Error, null, Array.Empty<Profile>(), message);
             }
 
             string? eid = null;
+            IReadOnlyList<string> eids = Array.Empty<string>();
+            IReadOnlyList<EuiccInventoryEntry> inventory = Array.Empty<EuiccInventoryEntry>();
             Exception? eidError = null;
             IReadOnlyList<Profile> profiles = Array.Empty<Profile>();
             Exception? profilesError = null;
@@ -1501,7 +1647,9 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
 
             try
             {
-                eid = await mgr.GetEIDAsync(ct).ConfigureAwait(false);
+                inventory = await mgr.GetInventoryAsync(ct).ConfigureAwait(false);
+                eids = inventory.Select(entry => entry.Eid).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                eid = eids.FirstOrDefault();
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -1512,18 +1660,14 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
                 eidError = ex;
             }
 
-            try
+            if (eidError == null)
             {
-                profiles = await mgr.ListProfilesAsync(ct).ConfigureAwait(false);
+                profiles = inventory.SelectMany(entry => entry.Profiles).ToArray();
                 profilesRead = true;
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            else
             {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                profilesError = ex;
+                profilesError = eidError;
             }
 
             if (!string.IsNullOrWhiteSpace(eid) || profilesRead)
@@ -1532,9 +1676,11 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
                     ? string.Empty
                     : "；Profile 列表暂时无法读取，可稍后重试。";
                 var message = !string.IsNullOrWhiteSpace(eid)
-                    ? $"已识别 eUICC 芯片{profileWarning}"
+                    ? eids.Count > 1
+                        ? $"已识别 {eids.Count} 个可独立选择的 eUICC；每组 Profile 已绑定其 ISD-R AID。{profileWarning}"
+                        : $"已识别 eUICC 芯片{profileWarning}"
                     : $"已识别 eUICC 芯片，当前 {profiles.Count} 个 Profile（EID 未返回）。{profileWarning}";
-                return CompleteEuiccProbe(EuiccCapability.Supported, eid, profiles, message);
+                return CompleteEuiccProbe(EuiccCapability.Supported, eid, profiles, message, eids, inventory);
             }
 
             var errors = new[] { eidError, profilesError }
@@ -1544,7 +1690,7 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
             if (errors.Any(IsExplicitlyNonEuiccCard))
             {
                 const string message = "当前卡片是普通实体 SIM，不支持 eSIM Profile 切换或写卡。";
-                return CompleteEuiccProbe(EuiccCapability.Unsupported, null, Array.Empty<Profile>(), message);
+                return CompleteEuiccProbe(EuiccCapability.Unsupported, null, Array.Empty<Profile>(), message, Array.Empty<string>());
             }
 
             var detail = errors
@@ -1553,7 +1699,7 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
             var unavailableMessage = string.IsNullOrWhiteSpace(detail)
                 ? "无法确认 eUICC 芯片状态，请在模组和 SIM 就绪后重试。"
                 : $"无法确认 eUICC 芯片状态：{detail}";
-            return CompleteEuiccProbe(EuiccCapability.Error, null, Array.Empty<Profile>(), unavailableMessage);
+            return CompleteEuiccProbe(EuiccCapability.Error, null, Array.Empty<Profile>(), unavailableMessage, Array.Empty<string>());
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -1570,10 +1716,12 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
         EuiccCapability capability,
         string? eid,
         IReadOnlyList<Profile> profiles,
-        string message)
+        string message,
+        IReadOnlyList<string>? eids = null,
+        IReadOnlyList<EuiccInventoryEntry>? inventory = null)
     {
         SetEuiccCapability(capability, message);
-        var result = new EuiccProbeResult(capability, eid, profiles.ToArray(), message);
+        var result = new EuiccProbeResult(capability, eid, profiles.ToArray(), message, eids, inventory);
         LastEuiccProbe = result;
         return result;
     }
@@ -1604,15 +1752,16 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
         return false;
     }
 
-    public async Task<bool> SwitchEuiccProfileAsync(string iccidOrAid, bool refresh = true, CancellationToken ct = default)
+    public async Task<bool> SwitchEuiccProfileAsync(string iccidOrAid, bool refresh = true, CancellationToken ct = default, string? euiccAid = null)
     {
         await _profileSwitchGate.WaitAsync(ct).ConfigureAwait(false);
         Interlocked.Exchange(ref _profileSwitchInProgress, 1);
         try
         {
-            var mgr = GetOrCreateEuiccManager();
-            if (mgr == null || Modem == null || !Modem.IsOpen)
+            if (!IsPcscReader && (Modem == null || !Modem.IsOpen))
                 throw new InvalidOperationException("当前卡槽模组未就绪。");
+            var targetEuicc = await GetVerifiedEuiccManagerAsync(iccidOrAid, euiccAid, ct).ConfigureAwait(false);
+            var mgr = targetEuicc.Manager;
 
             // Stop the old tunnel and its automatic recovery loop before the
             // eUICC changes which USIM application is active.
@@ -1625,7 +1774,7 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
             try { SimChanged?.Invoke(this, new SimStateChangedEventArgs(null, 1, "SWITCHING", Id)); } catch { }
             _eventBus.Publish(EventTopics.SystemLog, "eSIM", $"Slot {Id}: old VoWiFi identity cleared before profile switch.");
 
-            await mgr.SwitchProfileAsync(iccidOrAid, refresh, ct).ConfigureAwait(false);
+            await mgr.SwitchProfileAsync(iccidOrAid, targetEuicc.Aid, refresh, ct).ConfigureAwait(false);
 
             var expectedIccid = NormalizeIccidCandidate(iccidOrAid);
             if (expectedIccid == null)
@@ -1633,17 +1782,33 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
                 try
                 {
                     expectedIccid = NormalizeIccidCandidate(
-                        (await mgr.GetActiveProfileAsync(ct).ConfigureAwait(false))?.ICCID);
+                        (await mgr.GetActiveProfileAsync(targetEuicc.Aid, ct).ConfigureAwait(false))?.ICCID);
                 }
                 catch { }
+            }
+
+            if (IsPcscReader)
+            {
+                // PC/SC has no baseband to refresh. Re-read EF.ICCID/EF.IMSI
+                // from the card itself and reject an unexpected active profile.
+                await RefreshSimAsync(ct).ConfigureAwait(false);
+                if (Sim == null || (expectedIccid != null &&
+                    !string.Equals(NormalizeIccidCandidate(Sim.Iccid), expectedIccid, StringComparison.Ordinal)))
+                {
+                    throw new InvalidOperationException("PC/SC eSIM 切换后未读到目标 EF.ICCID；VoWiFi 已保持停止。");
+                }
+                _eventBus.Publish(EventTopics.SystemLog, "eSIM",
+                    $"Slot {Id}: PC/SC profile switch verified from EF.ICCID; VoWiFi may now restart.");
+                return true;
             }
 
             // Force a baseband/SIM reload even in flight mode, then reject any
             // stale CIMI/QCCID result. A failed verification deliberately leaves
             // Sim=null so no caller can authenticate using the previous card.
+            var modem = Modem ?? throw new InvalidOperationException("切换 eSIM 时模组已断开。");
             _eventBus.Publish(EventTopics.SystemLog, "eSIM",
                 $"Slot {Id}: stage=baseband reload; target={MaskIccid(expectedIccid)}; flight-mode={IsFlightMode}.");
-            var refreshCompleted = await Modem.RefreshSimAsync(ct, preserveFlightMode: IsFlightMode).ConfigureAwait(false);
+            var refreshCompleted = await modem.RefreshSimAsync(ct, preserveFlightMode: IsFlightMode).ConfigureAwait(false);
             if (!refreshCompleted)
                 throw new InvalidOperationException("基带在 eSIM REFRESH 后未连续确认 CPIN READY，已取消使用新卡注册。");
             _eventBus.Publish(EventTopics.SystemLog, "eSIM",
@@ -1889,20 +2054,25 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
             : null;
     }
 
-    public async Task<bool> DisableEuiccProfileAsync(string iccidOrAid, bool refresh = true, CancellationToken ct = default)
+    public async Task<bool> DisableEuiccProfileAsync(string iccidOrAid, bool refresh = true, CancellationToken ct = default, string? euiccAid = null)
     {
-        var mgr = GetOrCreateEuiccManager();
-        if (mgr == null) throw new InvalidOperationException("当前卡槽模组未就绪。");
-        await mgr.DisableProfileAsync(iccidOrAid, refresh, ct).ConfigureAwait(false);
+        var targetEuicc = await GetVerifiedEuiccManagerAsync(iccidOrAid, euiccAid, ct).ConfigureAwait(false);
+        await targetEuicc.Manager.DisableProfileAsync(iccidOrAid, targetEuicc.Aid, refresh, ct).ConfigureAwait(false);
         await RefreshSimAsync(ct).ConfigureAwait(false);
         return true;
     }
 
-    public async Task<bool> RenameEuiccProfileAsync(string iccidOrAid, string nickname, CancellationToken ct = default)
+    public async Task<bool> DeleteEuiccProfileAsync(string iccidOrAid, CancellationToken ct = default, string? euiccAid = null)
     {
-        var mgr = GetOrCreateEuiccManager();
-        if (mgr == null) throw new InvalidOperationException("当前卡槽模组未就绪。");
-        await mgr.RenameProfileAsync(iccidOrAid, nickname, ct).ConfigureAwait(false);
+        var targetEuicc = await GetVerifiedEuiccManagerAsync(iccidOrAid, euiccAid, ct).ConfigureAwait(false);
+        await targetEuicc.Manager.DeleteProfileAsync(iccidOrAid, targetEuicc.Aid, ct).ConfigureAwait(false);
+        return true;
+    }
+
+    public async Task<bool> RenameEuiccProfileAsync(string iccidOrAid, string nickname, CancellationToken ct = default, string? euiccAid = null)
+    {
+        var targetEuicc = await GetVerifiedEuiccManagerAsync(iccidOrAid, euiccAid, ct).ConfigureAwait(false);
+        await targetEuicc.Manager.RenameProfileAsync(iccidOrAid, nickname, targetEuicc.Aid, ct).ConfigureAwait(false);
         return true;
     }
 
@@ -1912,14 +2082,67 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
         IProgress<EuiccDownloadProgress>? progress = null,
         CancellationToken ct = default,
         bool allowUntrustedTls = false,
-        bool allowRetryAfterUncertain = false)
+        bool allowRetryAfterUncertain = false,
+        string? euiccAid = null)
+    {
+        var targetEuicc = await GetVerifiedEuiccManagerAsync(null, euiccAid, ct).ConfigureAwait(false);
+        var mgr = targetEuicc.Manager;
+        var deviceImei = IsPcscReader ? VoWifiImei : Imei;
+        if (string.IsNullOrWhiteSpace(deviceImei))
+            throw new InvalidOperationException(IsPcscReader
+                ? "请先在设备页填写并保存该 PC/SC 卡槽的真实 VoWiFi IMEI，再下载 eSIM Profile。"
+                : "当前卡槽尚未读取到 IMEI，无法下载 eSIM Profile。");
+        return await mgr.DownloadProfileAsync(activationCode, deviceImei, confirmationCode, progress, ct, allowUntrustedTls, allowRetryAfterUncertain, targetEuicc.Aid).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Resolves an operation to one independently selectable ISD-R AID and
+    /// verifies that its profile belongs to that exact eUICC storage.
+    /// </summary>
+    private async Task<VerifiedEuiccTarget> GetVerifiedEuiccManagerAsync(string? expectedProfile, string? requestedAid, CancellationToken ct)
     {
         var mgr = GetOrCreateEuiccManager();
-        if (mgr == null) throw new InvalidOperationException("当前卡槽模组未就绪。");
-        if (string.IsNullOrWhiteSpace(Imei))
-            throw new InvalidOperationException("当前卡槽尚未读取到 IMEI，无法下载 eSIM Profile。");
-        return await mgr.DownloadProfileAsync(activationCode, Imei, confirmationCode, progress, ct, allowUntrustedTls, allowRetryAfterUncertain).ConfigureAwait(false);
+        if (mgr == null) throw new InvalidOperationException("当前卡槽模组未就绪。请先读取 eUICC 芯片。 ");
+
+        var inventory = await mgr.GetInventoryAsync(ct).ConfigureAwait(false);
+        var probed = LastEuiccProbe?.Inventory ?? Array.Empty<EuiccInventoryEntry>();
+        if (probed.Count > 0 && !probed.Any(previous => inventory.Any(current =>
+            current.Eid.Equals(previous.Eid, StringComparison.OrdinalIgnoreCase) &&
+            current.Aid.Equals(previous.Aid, StringComparison.OrdinalIgnoreCase))))
+        {
+            throw new InvalidOperationException(
+                "当前 eUICC 身份已与上次探测结果不同。为避免向另一颗芯片写入，请重新读取 eUICC 芯片后再操作。");
+        }
+
+        var candidates = string.IsNullOrWhiteSpace(requestedAid)
+            ? inventory
+            : inventory.Where(entry => entry.Aid.Equals(requestedAid, StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (candidates.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "目标 eUICC ISD-R 不在当前卡片中。请重新读取芯片列表后再操作。");
+        }
+
+        if (!string.IsNullOrWhiteSpace(expectedProfile))
+        {
+            candidates = candidates.Where(entry => entry.Profiles.Any(profile =>
+                profile.ICCID.Equals(expectedProfile, StringComparison.OrdinalIgnoreCase) ||
+                profile.ISDPAID.Equals(expectedProfile, StringComparison.OrdinalIgnoreCase))).ToArray();
+            if (candidates.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    "目标 Profile 不属于指定 eUICC 芯片。请重新读取芯片列表并确认 EID/Profile 后再操作。");
+            }
+        }
+
+        if (candidates.Count > 1)
+            throw new InvalidOperationException("该操作对应多个 eUICC 芯片；请在目标 eUICC 下拉列表中明确选择后重试。");
+
+        var selected = candidates[0];
+        return new VerifiedEuiccTarget(mgr, selected.Aid);
     }
+
+    private sealed record VerifiedEuiccTarget(EuiccManager Manager, string Aid);
 
     private void SetError(string msg)
     {
@@ -1977,6 +2200,11 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
         {
             try { await Modem.DisposeAsync().ConfigureAwait(false); } catch { }
             Modem = null;
+        }
+
+        if (Aka is IDisposable aka)
+        {
+            try { aka.Dispose(); } catch { }
         }
 
         SetState(SlotState.Offline);

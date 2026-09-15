@@ -93,6 +93,17 @@ public class VoWifiManager : IDisposable
     public IkeProposalSuite CurrentSuite { get; private set; } = IkeProposalSuite.Auto;
     public AsyncEventBus? EventBus { get; }
     public ModemDriver? Modem { get; set; }
+    /// <summary>
+    /// Optional AKA source for transports which are not AT modems, for example a
+    /// PC/SC reader.  A supplied provider always wins over the modem provider.
+    /// </summary>
+    public IAkaProvider? AkaProvider { get; set; }
+
+    /// <summary>
+    /// The genuine terminal IMEI used in the IMS instance ID. PC/SC readers do
+    /// not expose one, so their owner must provide a legitimate device identity.
+    /// </summary>
+    public string? DeviceImei { get; set; }
     public EpdgResolutionResult? EpdgInfo { get; private set; }
     public string? AssignedIp { get; private set; }
     public DateTime? ConnectedAt { get; private set; }
@@ -423,10 +434,20 @@ public class VoWifiManager : IDisposable
                     "Check network connectivity or provide a custom ePDG IP.");
 
             // ── 2. Pick AKA Provider ─────────────────────────────────────────
-            if (Modem == null || !Modem.IsOpen)
+            IAkaProvider akaProvider;
+            if (AkaProvider != null)
+            {
+                akaProvider = AkaProvider;
+            }
+            else if (Modem is { IsOpen: true })
+            {
+                akaProvider = new Ec25AkaProvider(Modem.Session);
+            }
+            else
+            {
                 throw new InvalidOperationException(
-                    "USIM modem is unavailable. The existing VoWiFi intent is preserved and registration will retry when the module returns.");
-            IAkaProvider akaProvider = new Ec25AkaProvider(Modem.Session);
+                    "USIM is unavailable. Reinsert the card/reader, or reconnect the modem before starting VoWiFi.");
+            }
             if (!await akaProvider.CheckReadyAsync(sim.Iccid, ct).ConfigureAwait(false))
                 throw new InvalidOperationException(
                     "The live USIM ICCID does not match the identity selected for VoWiFi. Authentication was blocked before EAP-AKA; refresh the SIM identity after switching profiles.");
@@ -1323,6 +1344,14 @@ public class VoWifiManager : IDisposable
     /// </summary>
     private async Task<string> ResolveImeiAsync(CancellationToken ct)
     {
+        if (!string.IsNullOrWhiteSpace(DeviceImei))
+        {
+            var configured = DeviceImei.Trim();
+            if (configured.Length is >= 14 and <= 16 && configured.All(char.IsAsciiDigit))
+                return configured;
+            throw new InvalidOperationException("Configured VoWiFi IMEI must contain 14 to 16 digits.");
+        }
+
         if (Modem != null)
         {
             try
@@ -1338,7 +1367,7 @@ public class VoWifiManager : IDisposable
         }
 
         throw new InvalidOperationException(
-            "No IMEI available: attach a modem (AT+CGSN) or supply one explicitly. " +
+            "No IMEI available: attach a modem (AT+CGSN) or configure the genuine VoWiFi device IMEI for this PC/SC reader. " +
             "A placeholder IMEI is rejected by IMS cores during registration.");
     }
 

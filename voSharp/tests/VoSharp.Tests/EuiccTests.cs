@@ -14,11 +14,16 @@ public class MockEuiccTransport : IEuiccTransport
 {
     public string BackendName => "Mock eUICC";
     public List<byte[]> TransmittedApdus { get; } = [];
+    public List<string> OpenedAids { get; } = [];
     public Func<byte[], byte[]>? ApduHandler { get; set; }
+    public Func<string, int>? OpenChannelHandler { get; set; }
+    public string? ActiveAid { get; private set; }
 
     public Task<int> OpenLogicalChannelAsync(string aid, CancellationToken ct = default)
     {
-        return Task.FromResult(1);
+        ActiveAid = aid;
+        OpenedAids.Add(aid);
+        return Task.FromResult(OpenChannelHandler?.Invoke(aid) ?? 1);
     }
 
     public Task<byte[]> TransmitLogicalChannelAsync(int channel, byte[] apdu, CancellationToken ct = default)
@@ -41,6 +46,100 @@ public class MockEuiccTransport : IEuiccTransport
 
 public class EuiccTests
 {
+    [Fact]
+    public async Task MultiEuiccInventoryRoutesProfilesAndMutationsToTheirIsdrAid()
+    {
+        const string eid0 = "89049032000000000000000000000001";
+        const string eid1 = "89049032000000000000000000000002";
+        const string iccid0 = "89860412345678901234";
+        const string iccid1 = "89860412345678901235";
+
+        var transport = new MockEuiccTransport();
+        transport.OpenChannelHandler = aid => aid switch
+        {
+            EuiccManager.EstkProductAid or EuiccManager.EstkSe0IsdrAid or EuiccManager.EstkSe1IsdrAid => 1,
+            _ => throw new InvalidOperationException("AID not present")
+        };
+        transport.ApduHandler = apdu =>
+        {
+            var isProfileList = apdu.AsSpan().IndexOf(new byte[] { 0xBF, 0x2D }) >= 0;
+            var eid = transport.ActiveAid == EuiccManager.EstkSe1IsdrAid ? eid1 : eid0;
+            if (!isProfileList)
+            {
+                var eidResponse = new Tlv(0xBF3E);
+                eidResponse.Children.Add(new Tlv(Sgp22Client.TagEID, Convert.FromHexString(eid)));
+                return eidResponse.Encode().Concat(new byte[] { 0x90, 0x00 }).ToArray();
+            }
+
+            var response = new Tlv(Sgp22Client.TagGetProfilesInfo);
+            var profile = new Tlv(Sgp22Client.TagProfileInfo);
+            profile.Children.Add(new Tlv(Sgp22Client.TagICCID,
+                Tlv.IccidToBcd(transport.ActiveAid == EuiccManager.EstkSe1IsdrAid ? iccid1 : iccid0)));
+            response.Children.Add(profile);
+            return response.Encode().Concat(new byte[] { 0x90, 0x00 }).ToArray();
+        };
+
+        var manager = new EuiccManager(transport);
+        var inventory = await manager.GetInventoryAsync();
+
+        Assert.Equal(2, inventory.Count);
+        Assert.Equal([EuiccManager.EstkSe0IsdrAid, EuiccManager.EstkSe1IsdrAid], inventory.Select(entry => entry.Aid));
+        Assert.Equal(eid0, inventory[0].Profiles.Single().Eid);
+        Assert.Equal(EuiccManager.EstkSe0IsdrAid, inventory[0].Profiles.Single().EuiccAid);
+        Assert.Equal(eid1, inventory[1].Profiles.Single().Eid);
+        Assert.Equal(EuiccManager.EstkSe1IsdrAid, inventory[1].Profiles.Single().EuiccAid);
+
+        await manager.SwitchProfileAsync(iccid1, EuiccManager.EstkSe1IsdrAid);
+        Assert.Equal(EuiccManager.EstkSe1IsdrAid, transport.OpenedAids.Last());
+    }
+
+    [Fact]
+    public async Task EidDiscoveryPreservesAllSixteenByteEidCandidates()
+    {
+        var response = new Tlv(0xBF3E);
+        response.Children.Add(new Tlv(Sgp22Client.TagEID, Convert.FromHexString("89049032000000000000000000000001")));
+        response.Children.Add(new Tlv(Sgp22Client.TagEID, Convert.FromHexString("89049032000000000000000000000002")));
+        // An ICCID also uses tag 5A, but is 10 bytes and must not become an EID candidate.
+        response.Children.Add(new Tlv(Sgp22Client.TagEID, Tlv.IccidToBcd("89860412345678901234")));
+
+        var transport = new MockEuiccTransport
+        {
+            ApduHandler = _ => response.Encode().Concat(new byte[] { 0x90, 0x00 }).ToArray()
+        };
+        var client = new Sgp22Client(transport, channel: 1);
+
+        var eids = await client.GetEidsAsync();
+
+        Assert.Equal(new[]
+        {
+            "89049032000000000000000000000001",
+            "89049032000000000000000000000002"
+        }, eids);
+        Assert.Equal(eids[0], await client.GetEIDAsync());
+    }
+
+    [Fact]
+    public async Task ProfileParsingPreservesOwningEidWithoutConfusingItForIccid()
+    {
+        var response = new Tlv(Sgp22Client.TagGetProfilesInfo);
+        var profile = new Tlv(Sgp22Client.TagProfileInfo);
+        profile.Children.Add(new Tlv(Sgp22Client.TagEID, Convert.FromHexString("89049032000000000000000000000002")));
+        profile.Children.Add(new Tlv(Sgp22Client.TagICCID, Tlv.IccidToBcd("89860412345678901234")));
+        profile.Children.Add(new Tlv(Sgp22Client.TagProfileName, "Second eUICC profile"));
+        response.Children.Add(profile);
+
+        var client = new Sgp22Client(new MockEuiccTransport
+        {
+            ApduHandler = _ => response.Encode().Concat(new byte[] { 0x90, 0x00 }).ToArray()
+        }, channel: 1);
+
+        var parsed = await client.GetProfilesInfoAsync();
+
+        var actual = Assert.Single(parsed);
+        Assert.Equal("89049032000000000000000000000002", actual.Eid);
+        Assert.Equal("89860412345678901234", actual.ICCID);
+    }
+
     [Theory]
     [InlineData("LPA:1$smdp.example.com$MATCH-123", "smdp.example.com", "MATCH-123")]
     [InlineData("1$smdp.example.com$MATCH-123", "smdp.example.com", "MATCH-123")]
@@ -267,6 +366,9 @@ public class EuiccTests
     {
         await using var kernel = new VoKernel();
         var mock = new MockEuiccTransport();
+        mock.OpenChannelHandler = aid => aid == Sgp22Client.IsdrAidStandard
+            ? 1
+            : throw new InvalidOperationException("AID not present");
 
         // Setup mock response for GetProfilesInfo
         var respTlv = new Tlv(0xBF2D);

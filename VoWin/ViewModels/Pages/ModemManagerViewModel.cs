@@ -1,4 +1,6 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.Windows.Data;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
@@ -45,6 +47,12 @@ namespace VoWin.ViewModels.Pages
         [ObservableProperty]
         private ModemSlot? _selectedSlot;
 
+        // AT and USSD are retained as disabled tabs for PC/SC readers.  If a
+        // physical modem was previously on either tab, move back to Overview
+        // before that reader becomes selected.
+        [ObservableProperty]
+        private int _selectedDeviceTabIndex;
+
         [ObservableProperty]
         private string _newPortName = "COM6";
 
@@ -88,6 +96,9 @@ namespace VoWin.ViewModels.Pages
         private string _euiccEid = "未知 / 未检测到 eUICC";
 
         [ObservableProperty]
+        private string _euiccEidCandidatesText = string.Empty;
+
+        [ObservableProperty]
         private EuiccCapability _euiccCapability = EuiccCapability.Unknown;
 
         [ObservableProperty]
@@ -101,6 +112,16 @@ namespace VoWin.ViewModels.Pages
 
         [ObservableProperty]
         private ObservableCollection<Profile> _euiccProfiles = new();
+
+        public ObservableCollection<EuiccInventoryEntry> EuiccTargets { get; } = new();
+
+        [ObservableProperty]
+        private EuiccInventoryEntry? _selectedEuiccTarget;
+
+        partial void OnSelectedEuiccTargetChanged(EuiccInventoryEntry? value) => DownloadEuiccProfileCommand.NotifyCanExecuteChanged();
+
+        /// <summary>Displays dual-EID profile responses as separate card groups.</summary>
+        public ICollectionView EuiccProfilesView { get; }
 
         [ObservableProperty]
         private Profile? _selectedProfile;
@@ -255,6 +276,8 @@ namespace VoWin.ViewModels.Pages
         public ModemManagerViewModel(IVoKernelService kernelService)
         {
             _kernelService = kernelService;
+            EuiccProfilesView = CollectionViewSource.GetDefaultView(EuiccProfiles);
+            EuiccProfilesView.GroupDescriptions.Add(new PropertyGroupDescription(nameof(Profile.Eid)));
             SelectedSlot = _kernelService.ActiveSlot ?? Slots.FirstOrDefault();
 
             AtLogEntries.Add($"[{DateTime.Now:HH:mm:ss}] AT 交互终端就绪。输入指令并点击发送。");
@@ -468,11 +491,18 @@ namespace VoWin.ViewModels.Pages
 
         partial void OnSelectedSlotChanged(ModemSlot? value)
         {
+            if (value?.IsPcscReader == true && SelectedDeviceTabIndex is 3 or 4)
+            {
+                SelectedDeviceTabIndex = 0;
+            }
+
             DownloadEuiccProfileCommand.NotifyCanExecuteChanged();
             RefreshSummaryProperties();
             if (value != null)
             {
                 EuiccProfiles.Clear();
+                EuiccTargets.Clear();
+                SelectedEuiccTarget = null;
                 SelectedProfile = null;
                 EuiccEid = "正在检测 eUICC 芯片…";
                 EuiccCapability = value.EuiccCapability;
@@ -490,6 +520,8 @@ namespace VoWin.ViewModels.Pages
             else
             {
                 EuiccProfiles.Clear();
+                EuiccTargets.Clear();
+                SelectedEuiccTarget = null;
                 SelectedProfile = null;
                 EuiccEid = "未选择卡槽";
                 EuiccCapability = EuiccCapability.Unknown;
@@ -668,7 +700,7 @@ namespace VoWin.ViewModels.Pages
         {
             if (IsScanning || IsBusy) return;
             IsScanning = true;
-            StatusMessage = "正在自动扫描串口设备...";
+            StatusMessage = "正在扫描 Modem 串口与 PC/SC 读卡器...";
             try
             {
                 // Must run on background thread so it doesn't block WPF UI Dispatcher 
@@ -844,6 +876,7 @@ namespace VoWin.ViewModels.Pages
                 EuiccCapability = EuiccCapability.Probing;
                 EuiccSupportMessage = "正在读取 eUICC 芯片…";
                 EuiccEid = "正在读取…";
+                EuiccEidCandidatesText = string.Empty;
                 if (userInitiated)
                 {
                     StatusMessage = $"正在读取 [{slot.Name}] 的 eUICC / eSIM 芯片信息…";
@@ -862,7 +895,10 @@ namespace VoWin.ViewModels.Pages
                 EuiccCapability = EuiccCapability.Error;
                 EuiccSupportMessage = $"eUICC 检测失败：{ex.Message}";
                 EuiccEid = "未读取到 EID";
+                EuiccEidCandidatesText = string.Empty;
                 EuiccProfiles.Clear();
+                EuiccTargets.Clear();
+                SelectedEuiccTarget = null;
                 StatusMessage = EuiccSupportMessage;
             }
             finally
@@ -886,12 +922,37 @@ namespace VoWin.ViewModels.Pages
                     EuiccCapability.Supported => "EID 未返回",
                     _ => "未读取到 EID"
                 };
+            var eids = result.DetectedEids;
+            if (eids.Count > 1)
+            {
+                var profilesByEid = result.Profiles
+                    .GroupBy(profile => string.IsNullOrWhiteSpace(profile.Eid) ? result.Eid ?? string.Empty : profile.Eid,
+                        StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
+                EuiccEidCandidatesText = $"检测到 {eids.Count} 个可独立选择的 eUICC。每张 Profile 都绑定归属 EID 与 ISD-R AID：{Environment.NewLine}" +
+                  string.Join(Environment.NewLine, eids.Select((eid, index) =>
+                      $"EID {index + 1}: {eid} · Profile {profilesByEid.GetValueOrDefault(eid, 0)} 个"));
+            }
+            else
+            {
+                EuiccEidCandidatesText = string.Empty;
+            }
 
             EuiccProfiles.Clear();
             foreach (var profile in result.Profiles)
             {
                 EuiccProfiles.Add(profile);
             }
+
+            var previousAid = SelectedEuiccTarget?.Aid;
+            EuiccTargets.Clear();
+            foreach (var target in result.Inventory ?? Array.Empty<EuiccInventoryEntry>())
+            {
+                EuiccTargets.Add(target);
+            }
+            SelectedEuiccTarget = EuiccTargets.FirstOrDefault(target =>
+                string.Equals(target.Aid, previousAid, StringComparison.OrdinalIgnoreCase))
+                ?? EuiccTargets.FirstOrDefault();
 
             StatusMessage = result.Capability switch
             {
@@ -910,7 +971,7 @@ namespace VoWin.ViewModels.Pages
             StatusMessage = $"正在启用 Profile: {target.ProfileName ?? target.ICCID}...";
             try
             {
-                bool ok = await _kernelService.SwitchEuiccProfileAsync(target.ICCID, SelectedSlot?.Id);
+                bool ok = await _kernelService.SwitchEuiccProfileAsync(target.ICCID, SelectedSlot?.Id, target.EuiccAid);
                 StatusMessage = ok
                     ? "Profile 切换成功，新卡 ICCID / IMSI / 号码已重新读取并校验。"
                     : "Profile 切换失败；VoWiFi 已保持停止。";
@@ -931,7 +992,7 @@ namespace VoWin.ViewModels.Pages
             StatusMessage = $"正在禁用 Profile: {target.ProfileName ?? target.ICCID}...";
             try
             {
-                bool ok = await _kernelService.DisableEuiccProfileAsync(target.ICCID, SelectedSlot?.Id);
+                bool ok = await _kernelService.DisableEuiccProfileAsync(target.ICCID, SelectedSlot?.Id, target.EuiccAid);
                 StatusMessage = ok ? "Profile 禁用成功。" : "Profile 禁用失败。";
                 await LoadEuiccDataAsync();
             }
@@ -952,7 +1013,7 @@ namespace VoWin.ViewModels.Pages
 
             try
             {
-                bool ok = await _kernelService.RenameEuiccProfileAsync(SelectedProfile.ICCID, NewProfileNickname.Trim(), SelectedSlot?.Id);
+                bool ok = await _kernelService.RenameEuiccProfileAsync(SelectedProfile.ICCID, NewProfileNickname.Trim(), SelectedSlot?.Id, SelectedProfile.EuiccAid);
                 StatusMessage = ok ? "Profile 别名修改成功！" : "修改别名失败。";
                 await LoadEuiccDataAsync();
             }
@@ -998,6 +1059,7 @@ namespace VoWin.ViewModels.Pages
                !IsBusy &&
                !IsEuiccDownloading &&
                SelectedSlot != null &&
+               SelectedEuiccTarget != null &&
                !string.IsNullOrWhiteSpace(EuiccActivationCode) &&
                (!IsEuiccActivationBlocked(EuiccActivationCode) || AllowUncertainEuiccRetry);
 
@@ -1076,11 +1138,11 @@ namespace VoWin.ViewModels.Pages
                     slot.Id,
                     _euiccDownloadCts.Token,
                     allowUntrustedTlsForThisDownload,
-                    allowAuthorizedRetryForThisDownload);
+                    allowAuthorizedRetryForThisDownload,
+                    SelectedEuiccTarget?.Aid);
 
-                var profiles = await _kernelService.GetEuiccProfilesAsync(slot.Id);
-                EuiccProfiles.Clear();
-                foreach (var profile in profiles) EuiccProfiles.Add(profile);
+                var refreshedInventory = await _kernelService.ProbeEuiccAsync(slot.Id, _euiccDownloadCts.Token);
+                if (ReferenceEquals(SelectedSlot, slot)) ApplyEuiccProbeResult(refreshedInventory);
 
                 RecordEuiccProgress(new EuiccDownloadProgress(100, result.InstalledWithWarning
                     ? result.Warning ?? "Profile 已写入，但运营商确认有警告。"

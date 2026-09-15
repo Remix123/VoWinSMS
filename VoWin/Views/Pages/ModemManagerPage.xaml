@@ -147,7 +147,7 @@
           Command="{Binding DiscoverSlotsCommand}"
           Icon="{ui:SymbolIcon Symbol=ArrowSync24}"
           Content="重新扫描"
-          ToolTip="扫描并装载所有物理 Modem 串口"
+          ToolTip="扫描并装载物理 Modem 串口和已插卡的 PC/SC 读卡器"
         />
       </StackPanel>
     </Grid>
@@ -449,13 +449,24 @@
                       Command="{Binding RebootModemCommand}"
                       Icon="{ui:SymbolIcon Symbol=Power24}"
                       Content="重启模组"
-                      ToolTip="安全软重启模组射频基带 (需二次确认)"
+                      ToolTip="安全软重启射频基带（PC/SC 读卡器不支持）"
+                      IsEnabled="{Binding SelectedSlot.SupportsAtCommands}"
                     />
                   </StackPanel>
                 </Grid>
 
                 <!-- Row 2: Secondary Identity & Port Details with Quick Copy -->
                 <WrapPanel Grid.Row="1" VerticalAlignment="Center">
+                  <!-- PC/SC cards authenticate VoWiFi directly and have no AT modem.
+                       The genuine terminal IMEI is required by IMS; it is saved with
+                       the reader's module preferences and never auto-generated. -->
+                  <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,14,0"
+                              Visibility="{Binding SelectedSlot.IsPcscReader, Converter={StaticResource BoolToVis}}">
+                    <TextBlock FontSize="12" Foreground="{DynamicResource AppTextTertiaryBrush}" Text="PC/SC · 仅 IMS/VoWiFi" VerticalAlignment="Center" Margin="0,0,8,0" />
+                    <TextBlock FontSize="12" Foreground="{DynamicResource AppTextTertiaryBrush}" Text="VoWiFi IMEI:" VerticalAlignment="Center" Margin="0,0,5,0" />
+                    <TextBox Width="150" Padding="6,3" FontFamily="Consolas" Text="{Binding SelectedSlot.VoWifiImei, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" ToolTip="填写该 SIM 合法使用的真实终端 IMEI；保存模块偏好后生效" />
+                    <ui:Button Margin="6,0,0,0" Appearance="Secondary" Padding="8,3" Content="保存" Command="{Binding SaveModulePreferenceCommand}" />
+                  </StackPanel>
                   <!-- Carrier & Country -->
                   <TextBlock FontSize="12" Foreground="{DynamicResource AppTextSecondaryBrush}" VerticalAlignment="Center" Margin="0,0,14,0">
                     <Run Text="{Binding SelectedSlotCountryDisplay, Mode=OneWay}" />
@@ -508,7 +519,8 @@
             </Border>
 
             <!-- ================= DETAIL TABS ================= -->
-            <TabControl Grid.Row="1" Background="Transparent" BorderThickness="0">
+            <TabControl Grid.Row="1" Background="Transparent" BorderThickness="0"
+                        SelectedIndex="{Binding SelectedDeviceTabIndex, Mode=TwoWay}">
 
               <!-- ================= TAB 1: 概览 (3 Health Summary Cards) ================= -->
               <TabItem Header="概览">
@@ -940,6 +952,8 @@
                         <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="芯片 EID: " />
                         <TextBlock VerticalAlignment="Center" FontFamily="Consolas" FontWeight="SemiBold" Text="{Binding EuiccEid, Mode=OneWay}" />
                       </StackPanel>
+                      <TextBlock Margin="0,7,0,0" Text="{Binding EuiccEidCandidatesText, Mode=OneWay}" TextWrapping="Wrap"
+                                 FontFamily="Consolas" FontSize="11" Foreground="{DynamicResource AppWarningBrush}" />
                       <TextBlock Margin="0,7,0,0" Text="{Binding EuiccSupportMessage}" TextWrapping="Wrap"
                                  FontSize="11" Foreground="{DynamicResource AppTextSecondaryBrush}" />
                     </StackPanel>
@@ -976,6 +990,18 @@
                                     PlaceholderText="LPA:1$SM-DP+地址$Matching ID" ToolTip="激活码仅通过标准输入传给本地 LPA，不写入日志" />
                         <ui:TextBox Grid.Column="2" Text="{Binding EuiccConfirmationCode, UpdateSourceTrigger=PropertyChanged}"
                                     PlaceholderText="确认码（如运营商要求）" />
+                      </Grid>
+
+                      <Grid Margin="0,9,0,0">
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="Auto" />
+                          <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="目标 eUICC：" VerticalAlignment="Center" Margin="0,0,8,0"
+                                   FontSize="12" Foreground="{DynamicResource AppTextSecondaryBrush}" />
+                        <ComboBox Grid.Column="1" ItemsSource="{Binding EuiccTargets}" SelectedItem="{Binding SelectedEuiccTarget, Mode=TwoWay}"
+                                  DisplayMemberPath="DisplayName" MinWidth="300"
+                                  ToolTip="下载会明确选择此 eUICC 的 ISD-R AID；多 EID 卡不会回落到另一颗芯片" />
                       </Grid>
 
                       <CheckBox IsChecked="{Binding AllowUntrustedEuiccTls}" Margin="0,9,0,0" VerticalAlignment="Center">
@@ -1059,12 +1085,9 @@
                     </TabItem>
 
                     <TabItem Header="已安装的配置文件">
-                      <Grid Margin="0,10,0,0">
-                        <Grid.RowDefinitions>
-                          <RowDefinition Height="Auto" />
-                          <RowDefinition Height="*" />
-                        </Grid.RowDefinitions>
-                        <Border Grid.Row="0" Background="{DynamicResource AppInputBrush}" BorderBrush="{DynamicResource AppCardBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,0,0,8">
+                      <ScrollViewer Margin="0,10,0,0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" PanningMode="VerticalOnly">
+                        <StackPanel>
+                        <Border Background="{DynamicResource AppInputBrush}" BorderBrush="{DynamicResource AppCardBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,0,0,8">
                           <Grid>
                             <Grid.ColumnDefinitions>
                               <ColumnDefinition Width="*" />
@@ -1073,16 +1096,27 @@
                             <StackPanel>
                               <TextBlock Text="已安装的 eSIM Profile" FontSize="14" FontWeight="SemiBold" />
                               <TextBlock Margin="0,3,0,0" FontSize="11" Foreground="{DynamicResource AppTextSecondaryBrush}">
-                                <Run Text="已读取 " /><Run Text="{Binding EuiccProfiles.Count, Mode=OneWay}" /><Run Text=" 个 Profile；选择后可启用或禁用。" />
+                                <Run Text="已读取 " /><Run Text="{Binding EuiccProfiles.Count, Mode=OneWay}" /><Run Text=" 个 Profile；按 EID 标识归属，只有当前可操作 EID 可启用或禁用。" />
                               </TextBlock>
                             </StackPanel>
                             <ui:Button Grid.Column="1" Appearance="Secondary" Command="{Binding LoadEuiccDataCommand}" Content="刷新列表" />
                           </Grid>
                         </Border>
 
-                  <!-- Bounded ListBox keeps the profile cards scrollable even
-                       when the page is hosted inside a larger layout. -->
-                  <ListBox Grid.Row="1" MaxHeight="520" ItemsSource="{Binding EuiccProfiles}" SelectedItem="{Binding SelectedProfile}" BorderThickness="0" Background="Transparent" ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.CanContentScroll="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                  <!-- The entire Profile tab scrolls as one surface so later
+                       EID groups are never clipped by a nested fixed viewport. -->
+                  <ListBox ItemsSource="{Binding EuiccProfilesView}" SelectedItem="{Binding SelectedProfile}" BorderThickness="0" Background="Transparent" ScrollViewer.VerticalScrollBarVisibility="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.CanContentScroll="False" VirtualizingPanel.IsVirtualizing="False">
+                    <ListBox.GroupStyle>
+                      <GroupStyle>
+                        <GroupStyle.HeaderTemplate>
+                          <DataTemplate>
+                            <Border Margin="0,10,0,4" Padding="8,5" CornerRadius="6" Background="{DynamicResource AppCardBrush}" BorderBrush="{DynamicResource AppCardBorderBrush}" BorderThickness="1">
+                              <TextBlock FontFamily="Consolas" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource AppAccentBrush}" Text="{Binding Name, StringFormat=EID {0}}" />
+                            </Border>
+                          </DataTemplate>
+                        </GroupStyle.HeaderTemplate>
+                      </GroupStyle>
+                    </ListBox.GroupStyle>
                     <ListBox.ItemTemplate>
                       <DataTemplate>
                         <Border Padding="12,10" Margin="0,3" CornerRadius="8" Background="{DynamicResource AppInputBrush}" BorderBrush="{DynamicResource AppCardBorderBrush}" BorderThickness="1">
@@ -1095,9 +1129,12 @@
                             <StackPanel Grid.Column="0">
                               <TextBlock FontWeight="Bold" FontSize="13" Text="{Binding ProfileName, Mode=OneWay}" />
                               <TextBlock Text="{Binding ICCID, Mode=OneWay}" FontFamily="Consolas" Foreground="{DynamicResource AppTextSecondaryBrush}" FontSize="11" Margin="0,2,0,0" />
+                              <TextBlock Text="{Binding Eid, StringFormat=EID: {0}}" FontFamily="Consolas" Foreground="{DynamicResource AppTextTertiaryBrush}" FontSize="10.5" Margin="0,2,0,0" />
+                              <TextBlock Text="{Binding EuiccAid, StringFormat=ISD-R AID: {0}}" FontFamily="Consolas" Foreground="{DynamicResource AppTextTertiaryBrush}" FontSize="10.5" Margin="0,2,0,0" />
                               <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
                                 <TextBlock Text="{Binding State, Mode=OneWay}" Foreground="{DynamicResource AppSuccessBrush}" FontWeight="SemiBold" FontSize="11" Margin="0,0,12,0" />
                                 <TextBlock Text="{Binding ProviderName, Mode=OneWay}" Foreground="{DynamicResource AppTextTertiaryBrush}" FontSize="11" />
+                                <TextBlock Text="当前可操作" Foreground="{DynamicResource AppAccentBrush}" FontWeight="SemiBold" FontSize="11" Margin="12,0,0,0" Visibility="{Binding IsCurrentlyAddressable, Converter={StaticResource BoolToVis}}" />
                               </StackPanel>
                             </StackPanel>
 
@@ -1108,12 +1145,14 @@
                                 Command="{Binding DataContext.SwitchEuiccProfileCommand, RelativeSource={RelativeSource AncestorType=Page}}"
                                 CommandParameter="{Binding}"
                                 Content="启用"
+                                IsEnabled="{Binding IsCurrentlyAddressable}"
                               />
                               <ui:Button
                                 Appearance="Secondary"
                                 Command="{Binding DataContext.DisableEuiccProfileCommand, RelativeSource={RelativeSource AncestorType=Page}}"
                                 CommandParameter="{Binding}"
                                 Content="禁用"
+                                IsEnabled="{Binding IsCurrentlyAddressable}"
                               />
                             </StackPanel>
                           </Grid>
@@ -1121,14 +1160,15 @@
                       </DataTemplate>
                     </ListBox.ItemTemplate>
                   </ListBox>
-                      </Grid>
+                        </StackPanel>
+                      </ScrollViewer>
                     </TabItem>
                   </TabControl>
                 </Grid>
               </TabItem>
 
               <!-- ================= TAB 4: AT 终端 (AT Terminal) ================= -->
-              <TabItem Header="AT 终端">
+              <TabItem Header="AT 终端" IsEnabled="{Binding SelectedSlot.SupportsAtCommands}">
                 <Grid Margin="0,10,0,0">
                   <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -1175,7 +1215,7 @@
               </TabItem>
 
               <!-- ================= TAB 5: USSD 交互 (USSD Tab) ================= -->
-              <TabItem Header="USSD">
+              <TabItem Header="USSD" IsEnabled="{Binding SelectedSlot.SupportsAtCommands}">
                 <Grid Margin="0,10,0,0">
                   <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />

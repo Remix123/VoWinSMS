@@ -33,13 +33,52 @@ public sealed class PcscAkaProvider : IAkaProvider, IDisposable
 
     public string ReaderName { get; }
 
+    /// <summary>Reads EF.ICCID directly from the UICC, without relying on a modem cache.</summary>
+    public Task<string> ReadIccidAsync(CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        SelectFile("3F00");
+        SelectFile("2FE2");
+        var data = ReadBinary(10);
+        var iccid = DecodeBcd(data);
+        if (iccid.Length is < 18 or > 22)
+            throw new InvalidOperationException("EF.ICCID returned an invalid value.");
+        return Task.FromResult(iccid);
+    }
+
+    /// <summary>Reads EF.IMSI from ADF.USIM. This is the identity used by EAP-AKA.</summary>
+    public Task<string> ReadImsiAsync(CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        SelectUsimApplication();
+        SelectFile("6F07");
+        var data = ReadBinary(9);
+        if (data.Length < 2)
+            throw new InvalidOperationException("EF.IMSI returned no data.");
+
+        // The first octet is the IMSI length in BCD octets. The remaining digits
+        // use the same low-nibble-first encoding as EF.ICCID.
+        var byteCount = Math.Min(data[0], data.Length - 1);
+        var imsi = DecodeBcd(data.AsSpan(1, byteCount));
+        if (imsi.Length is < 5 or > 16)
+            throw new InvalidOperationException("EF.IMSI returned an invalid value.");
+        return Task.FromResult(imsi);
+    }
+
     public Task<bool> CheckReadyAsync(string? expectedIccid = null, CancellationToken ct = default)
     {
-        // Selecting ADF.USIM proves a USIM is reachable. An ICCID check would require reading
-        // EF-ICCID (2FE2), which is deliberately left out of the readiness path.
         try
         {
             SelectUsimApplication();
+            // In a PC/SC reader a physical card can be exchanged without any
+            // modem URC. When a caller has a live identity, compare EF.ICCID so
+            // an EAP-AKA attempt can never silently use the replacement card.
+            if (!string.IsNullOrWhiteSpace(expectedIccid))
+            {
+                var actualIccid = ReadIccidAsync(ct).GetAwaiter().GetResult();
+                if (!string.Equals(NormalizeDigits(actualIccid), NormalizeDigits(expectedIccid), StringComparison.Ordinal))
+                    return Task.FromResult(false);
+            }
             return Task.FromResult(true);
         }
         catch (InvalidOperationException)
@@ -89,6 +128,48 @@ public sealed class PcscAkaProvider : IAkaProvider, IDisposable
             throw new InvalidOperationException(
                 $"Selecting ADF.USIM failed (SW=0x{sw:X4}). Is a USIM inserted?");
     }
+
+    private void SelectFile(string fileId)
+    {
+        var file = Convert.FromHexString(fileId);
+        var response = _reader.TransmitApdu([0x00, 0xA4, 0x00, 0x04, 0x02, file[0], file[1]]);
+        EnsureSuccess(response, $"selecting EF {fileId}");
+    }
+
+    private byte[] ReadBinary(byte length)
+    {
+        var response = _reader.TransmitApdu([0x00, 0xB0, 0x00, 0x00, length]);
+        EnsureSuccess(response, "reading transparent EF");
+        return response![..^2];
+    }
+
+    private static void EnsureSuccess(byte[]? response, string operation)
+    {
+        if (response is null || response.Length < 2)
+            throw new InvalidOperationException($"No APDU response while {operation}.");
+        var sw = (ushort)((response[^2] << 8) | response[^1]);
+        if (sw != 0x9000)
+            throw new InvalidOperationException($"PC/SC card rejected {operation} (SW=0x{sw:X4}).");
+    }
+
+    private static string DecodeBcd(ReadOnlySpan<byte> bytes)
+    {
+        var digits = new System.Text.StringBuilder(bytes.Length * 2);
+        foreach (var value in bytes)
+        {
+            AppendBcd(value & 0x0F, digits);
+            AppendBcd(value >> 4, digits);
+        }
+        return digits.ToString();
+
+        static void AppendBcd(int nibble, System.Text.StringBuilder output)
+        {
+            if (nibble is >= 0 and <= 9) output.Append((char)('0' + nibble));
+            // 0xF is the normal padding nibble; other values are not digits.
+        }
+    }
+
+    private static string NormalizeDigits(string value) => new(value.Where(char.IsAsciiDigit).ToArray());
 
     public void Dispose()
     {

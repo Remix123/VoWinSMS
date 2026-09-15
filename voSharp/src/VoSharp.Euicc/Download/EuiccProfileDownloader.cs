@@ -51,7 +51,7 @@ internal sealed class EuiccProfileDownloader
         _http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(90) };
     }
 
-    public async Task<EuiccWorkerDownloadResult> DownloadAsync(EuiccActivationCode code, string imei, string? confirmationCode, IProgress<EuiccDownloadProgress>? progress, CancellationToken ct)
+    public async Task<EuiccWorkerDownloadResult> DownloadAsync(EuiccActivationCode code, string imei, string? confirmationCode, string euiccAid, IProgress<EuiccDownloadProgress>? progress, CancellationToken ct)
     {
         var transactionStarted = false; var installStarted = false; var channel = 0; string? transactionId = null; byte[]? cardTransactionId = null;
         var currentStage = "校验 SM-DP+ 地址";
@@ -60,7 +60,7 @@ internal sealed class EuiccProfileDownloader
             ValidateSmdpAddress(code.SmdpAddress);
             currentStage = "打开 eUICC 逻辑通道并读取挑战值";
             progress?.Report(new(10, "正在连接 SM-DP+ 并读取 eUICC 挑战值"));
-            channel = await _transport.OpenLogicalChannelAsync(Sgp22Client.IsdrAidStandard, ct).ConfigureAwait(false);
+            channel = await _transport.OpenLogicalChannelAsync(euiccAid, ct).ConfigureAwait(false);
             var challenge = FirstValue(await Es10Async(channel, [0xBF, 0x2E, 0x00], ct).ConfigureAwait(false), 0x80) ?? throw new InvalidDataException("eUICC 未返回挑战值。");
             var info1 = await Es10Async(channel, [0xBF, 0x20, 0x00], ct).ConfigureAwait(false);
             currentStage = "向 SM-DP+ 发起下载认证";

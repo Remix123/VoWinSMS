@@ -996,6 +996,13 @@ namespace VoWin.Services
                     targetSlot = Kernel.Pool.ActiveSlot;
                 }
 
+                if (targetSlot?.IsPcscReader == true)
+                {
+                    const string message = "PC/SC 卡槽不提供 AT 指令；可使用 eSIM/USIM 管理、VoWiFi、IMS 通话和短信。";
+                    AddLog("WARN", "PC/SC", message);
+                    return $"ERROR: {message}";
+                }
+
                 if (targetSlot?.Modem != null && targetSlot.Modem.IsOpen)
                 {
                     var resp = await targetSlot.Modem.SendRawAtCommandAsync(trimmed, 5000);
@@ -1033,6 +1040,13 @@ namespace VoWin.Services
                     slot = Kernel.Pool.ActiveSlot;
                 }
 
+                if (slot?.IsPcscReader == true)
+                {
+                    const string message = "PC/SC 卡槽不支持 USSD；请在 VoWiFi 注册后使用 IMS 通话和短信。";
+                    AddLog("WARN", "PC/SC", message);
+                    return $"ERROR: {message}";
+                }
+
                 if (slot != null)
                 {
                     var result = await slot.SendUssdAsync(code);
@@ -1061,6 +1075,12 @@ namespace VoWin.Services
                 else
                 {
                     slot = Kernel.Pool.ActiveSlot;
+                }
+
+                if (slot?.IsPcscReader == true)
+                {
+                    AddLog("WARN", "PC/SC", "PC/SC 卡槽没有蜂窝射频，无法设置飞行模式。");
+                    return false;
                 }
 
                 if (slot != null)
@@ -1094,6 +1114,12 @@ namespace VoWin.Services
                 else
                 {
                     slot = Kernel.Pool.ActiveSlot;
+                }
+
+                if (slot?.IsPcscReader == true)
+                {
+                    AddLog("WARN", "PC/SC", "PC/SC 卡槽没有可重启的 Modem。");
+                    return false;
                 }
 
                 if (slot != null)
@@ -1374,7 +1400,8 @@ namespace VoWin.Services
                     EuiccCapability.Error,
                     null,
                     Array.Empty<Profile>(),
-                    "未发现可用卡槽，无法检测 eUICC 芯片。");
+                    "未发现可用卡槽，无法检测 eUICC 芯片。",
+                    Array.Empty<string>());
             }
 
             var result = await slot.ProbeEuiccAsync(cancellationToken).ConfigureAwait(false);
@@ -1393,13 +1420,13 @@ namespace VoWin.Services
             return await Kernel.GetEuiccProfilesAsync();
         }
 
-        public async Task<bool> SwitchEuiccProfileAsync(string iccidOrAid, string? slotId = null)
+        public async Task<bool> SwitchEuiccProfileAsync(string iccidOrAid, string? slotId = null, string? euiccAid = null)
         {
             AddLog("INFO", "eSIM", $"Switching to eSIM profile: {iccidOrAid} on slot {slotId ?? "Active"}");
             var slot = (!string.IsNullOrEmpty(slotId) ? Slots.FirstOrDefault(s => s.Id == slotId) : ActiveSlot) ?? Slots.FirstOrDefault();
             if (slot != null)
             {
-                var switched = await slot.SwitchEuiccProfileAsync(iccidOrAid).ConfigureAwait(false);
+                var switched = await slot.SwitchEuiccProfileAsync(iccidOrAid, euiccAid: euiccAid).ConfigureAwait(false);
                 if (switched)
                 {
                     // Only the newly verified ICCID may select SIM preferences,
@@ -1412,30 +1439,35 @@ namespace VoWin.Services
             return await Kernel.SwitchEuiccProfileAsync(iccidOrAid);
         }
 
-        public async Task<bool> DisableEuiccProfileAsync(string iccidOrAid, string? slotId = null)
+        public async Task<bool> DisableEuiccProfileAsync(string iccidOrAid, string? slotId = null, string? euiccAid = null)
         {
             AddLog("INFO", "eSIM", $"Disabling eSIM profile: {iccidOrAid} on slot {slotId ?? "Active"}");
             var slot = (!string.IsNullOrEmpty(slotId) ? Slots.FirstOrDefault(s => s.Id == slotId) : ActiveSlot) ?? Slots.FirstOrDefault();
             if (slot != null)
             {
-                return await slot.DisableEuiccProfileAsync(iccidOrAid);
+                return await slot.DisableEuiccProfileAsync(iccidOrAid, euiccAid: euiccAid);
             }
             return await Kernel.DisableEuiccProfileAsync(iccidOrAid);
         }
 
-        public async Task<bool> DeleteEuiccProfileAsync(string iccidOrAid, string? slotId = null)
+        public async Task<bool> DeleteEuiccProfileAsync(string iccidOrAid, string? slotId = null, string? euiccAid = null)
         {
             AddLog("INFO", "eSIM", $"Deleting eSIM profile: {iccidOrAid}");
+            var slot = (!string.IsNullOrEmpty(slotId) ? Slots.FirstOrDefault(s => s.Id == slotId) : ActiveSlot) ?? Slots.FirstOrDefault();
+            if (slot != null)
+            {
+                return await slot.DeleteEuiccProfileAsync(iccidOrAid, euiccAid: euiccAid);
+            }
             return await Kernel.DeleteEuiccProfileAsync(iccidOrAid);
         }
 
-        public async Task<bool> RenameEuiccProfileAsync(string iccidOrAid, string nickname, string? slotId = null)
+        public async Task<bool> RenameEuiccProfileAsync(string iccidOrAid, string nickname, string? slotId = null, string? euiccAid = null)
         {
             AddLog("INFO", "eSIM", $"Renaming profile {iccidOrAid} -> \"{nickname}\" on slot {slotId ?? "Active"}");
             var slot = (!string.IsNullOrEmpty(slotId) ? Slots.FirstOrDefault(s => s.Id == slotId) : ActiveSlot) ?? Slots.FirstOrDefault();
             if (slot != null)
             {
-                return await slot.RenameEuiccProfileAsync(iccidOrAid, nickname);
+                return await slot.RenameEuiccProfileAsync(iccidOrAid, nickname, euiccAid: euiccAid);
             }
             return await Kernel.RenameEuiccProfileAsync(iccidOrAid, nickname);
         }
@@ -1457,7 +1489,8 @@ namespace VoWin.Services
             string? slotId = null,
             CancellationToken cancellationToken = default,
             bool allowUntrustedTls = false,
-            bool allowRetryAfterUncertain = false)
+            bool allowRetryAfterUncertain = false,
+            string? euiccAid = null)
         {
             var slot = (!string.IsNullOrEmpty(slotId) ? Slots.FirstOrDefault(s => s.Id == slotId) : ActiveSlot) ?? Slots.FirstOrDefault();
             AddLog("INFO", "eSIM", $"Starting verified eSIM profile download on slot {slot?.Name ?? "Active"}.");
@@ -1473,7 +1506,7 @@ namespace VoWin.Services
             try
             {
                 var result = slot != null
-                    ? await slot.DownloadEuiccProfileAsync(activationCode, confirmationCode, tracedProgress, cancellationToken, allowUntrustedTls, allowRetryAfterUncertain)
+                    ? await slot.DownloadEuiccProfileAsync(activationCode, confirmationCode, tracedProgress, cancellationToken, allowUntrustedTls, allowRetryAfterUncertain, euiccAid)
                     : await Kernel.DownloadEuiccProfileAsync(activationCode, confirmationCode, tracedProgress, cancellationToken, allowUntrustedTls, allowRetryAfterUncertain);
                 AddLog(result.InstalledWithWarning ? "WARN" : "INFO", "eSIM",
                     $"Profile download completed. ICCID={result.Iccid}; Warning={result.Warning ?? "None"}");
@@ -2111,6 +2144,13 @@ namespace VoWin.Services
                 {
                     slot.Name = modPref.CustomName.Trim();
                 }
+                if (slot.IsPcscReader && modPref?.Imei is { Length: > 0 } configuredImei)
+                {
+                    // ModulePreferences.Imei historically stores the modem's
+                    // AT+CGSN value. For a PC/SC-only slot it stores the user
+                    // supplied genuine terminal identity used by IMS.
+                    slot.VoWifiImei = configuredImei;
+                }
                 slot.CardNickname = simPref?.CardNickname;
 
                 // Routing is resolved from exactly two persistent tiers:
@@ -2142,7 +2182,7 @@ namespace VoWin.Services
                 // physical slot.  A SIM without a saved record starts with all
                 // switches off so moving it to another modem is predictable.
                 bool? preferredFlightMode = simPref?.DefaultFlightMode ?? false;
-                if (preferredFlightMode.HasValue && slot.IsFlightMode != preferredFlightMode.Value)
+                if (!slot.IsPcscReader && preferredFlightMode.HasValue && slot.IsFlightMode != preferredFlightMode.Value)
                 {
                     try
                     {
@@ -2164,7 +2204,7 @@ namespace VoWin.Services
                     }
                 }
 
-                if (!slot.IsFlightMode)
+                if (!slot.IsPcscReader && !slot.IsFlightMode)
                 {
                     bool? preferredRoaming = simPref?.DefaultDataRoaming ?? false;
                     if (preferredRoaming.HasValue)
@@ -2286,6 +2326,12 @@ namespace VoWin.Services
 
         public async Task SyncModemSmsAsync(ModemSlot slot, CancellationToken cancellationToken = default)
         {
+            if (slot.IsPcscReader)
+            {
+                // Inbound/outbound SMS uses the IMS SIP path for a PC/SC slot;
+                // there is no modem message store to enumerate.
+                return;
+            }
             if (slot?.Sms == null) return;
             if (!_syncingSlots.TryAdd(slot.Id, 0)) return;
 
@@ -2407,7 +2453,7 @@ namespace VoWin.Services
             var model = new ModulePreferenceModel
             {
                 Id = slotId,
-                Imei = slot?.Imei,
+                Imei = slot?.IsPcscReader == true ? slot.VoWifiImei : slot?.Imei,
                 PortName = slot?.PortName,
                 CustomName = normalizedName,
                 DefaultFlightMode = flightMode,

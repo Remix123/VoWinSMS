@@ -806,19 +806,21 @@ public class VoKernel : IVoKernel
     public async Task<IReadOnlyList<Profile>> GetEuiccProfilesAsync(CancellationToken ct = default)
     {
         var mgr = await GetOrCreateEuiccManagerAsync(ct).ConfigureAwait(false);
-        return await mgr.ListProfilesAsync(ct).ConfigureAwait(false);
+        var inventory = await mgr.GetInventoryAsync(ct).ConfigureAwait(false);
+        return inventory.SelectMany(entry => entry.Profiles).ToArray();
     }
 
     public async Task<Profile?> GetActiveEuiccProfileAsync(CancellationToken ct = default)
     {
         var mgr = await GetOrCreateEuiccManagerAsync(ct).ConfigureAwait(false);
-        return await mgr.GetActiveProfileAsync(ct).ConfigureAwait(false);
+        var inventory = await mgr.GetInventoryAsync(ct).ConfigureAwait(false);
+        return inventory.SelectMany(entry => entry.Profiles).FirstOrDefault(profile => profile.State == ProfileState.Enabled);
     }
 
     public async Task<string> GetEuiccEidAsync(CancellationToken ct = default)
     {
         var mgr = await GetOrCreateEuiccManagerAsync(ct).ConfigureAwait(false);
-        return await mgr.GetEIDAsync(ct).ConfigureAwait(false);
+        return (await mgr.GetInventoryAsync(ct).ConfigureAwait(false)).First().Eid;
     }
 
     public async Task<bool> SwitchEuiccProfileAsync(string iccidOrAid, bool refresh = true, CancellationToken ct = default)
@@ -1890,12 +1892,13 @@ public class VoKernel : IVoKernel
         switch (subCmd)
         {
             case "eid":
-                var eid = await euicc.GetEIDAsync(ct).ConfigureAwait(false);
-                return new KernelCommandResult(true, $"EID: {eid}", new { EID = eid, Backend = euicc.Transport.BackendName });
+                var eids = await euicc.GetInventoryAsync(ct).ConfigureAwait(false);
+                return new KernelCommandResult(true, $"Found {eids.Count} independently addressable eUICC(s)", new { Eids = eids, Backend = euicc.Transport.BackendName });
 
             case "list" or "profiles":
-                var profiles = await euicc.ListProfilesAsync(ct).ConfigureAwait(false);
-                return new KernelCommandResult(true, $"Found {profiles.Count} installed eSIM profile(s) on {euicc.Transport.BackendName}", profiles);
+                var inventory = await euicc.GetInventoryAsync(ct).ConfigureAwait(false);
+                var profiles = inventory.SelectMany(entry => entry.Profiles).ToArray();
+                return new KernelCommandResult(true, $"Found {profiles.Length} installed eSIM profile(s) across {inventory.Count} eUICC(s) on {euicc.Transport.BackendName}", inventory);
 
             case "switch" or "enable":
                 if (parts.Length < 3)

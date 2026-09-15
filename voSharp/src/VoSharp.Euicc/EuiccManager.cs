@@ -15,6 +15,10 @@ namespace VoSharp.Euicc;
 public class EuiccManager
 {
     private readonly SemaphoreSlim _sessionGate = new(1, 1);
+    public const string XeSimIsdrAid = "A0000005591010FFFFFFFF8900000177";
+    public const string EstkProductAid = "A06573746B6D65FFFFFFFFFFFF6D6774";
+    public const string EstkSe0IsdrAid = "A06573746B6D65FFFF4953442D522030";
+    public const string EstkSe1IsdrAid = "A06573746B6D65FFFF4953442D522031";
 
     public IEuiccTransport Transport { get; }
     public AsyncEventBus? EventBus { get; }
@@ -30,11 +34,17 @@ public class EuiccManager
     }
 
     public async Task<T> ExecuteSessionAsync<T>(Func<Sgp22Client, Task<T>> action, CancellationToken ct = default)
+        => await ExecuteSessionForAidAsync(DefaultAid, action, ct).ConfigureAwait(false);
+
+    public async Task<T> ExecuteSessionAsync<T>(string aid, Func<Sgp22Client, Task<T>> action, CancellationToken ct = default)
+        => await ExecuteSessionForAidAsync(ResolveAid(aid), action, ct).ConfigureAwait(false);
+
+    private async Task<T> ExecuteSessionForAidAsync<T>(string aid, Func<Sgp22Client, Task<T>> action, CancellationToken ct)
     {
         await _sessionGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            int channel = await Transport.OpenLogicalChannelAsync(DefaultAid, ct).ConfigureAwait(false);
+            int channel = await Transport.OpenLogicalChannelAsync(aid, ct).ConfigureAwait(false);
             try
             {
                 var client = new Sgp22Client(Transport, channel);
@@ -53,11 +63,17 @@ public class EuiccManager
     }
 
     public async Task ExecuteSessionAsync(Func<Sgp22Client, Task> action, CancellationToken ct = default)
+        => await ExecuteSessionForAidAsync(DefaultAid, action, ct).ConfigureAwait(false);
+
+    public async Task ExecuteSessionAsync(string aid, Func<Sgp22Client, Task> action, CancellationToken ct = default)
+        => await ExecuteSessionForAidAsync(ResolveAid(aid), action, ct).ConfigureAwait(false);
+
+    private async Task ExecuteSessionForAidAsync(string aid, Func<Sgp22Client, Task> action, CancellationToken ct)
     {
         await _sessionGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            int channel = await Transport.OpenLogicalChannelAsync(DefaultAid, ct).ConfigureAwait(false);
+            int channel = await Transport.OpenLogicalChannelAsync(aid, ct).ConfigureAwait(false);
             try
             {
                 var client = new Sgp22Client(Transport, channel);
@@ -80,9 +96,24 @@ public class EuiccManager
         return ExecuteSessionAsync(client => client.GetEIDAsync(ct), ct);
     }
 
-    public async Task<List<Profile>> ListProfilesAsync(CancellationToken ct = default)
+    /// <summary>Returns all EID candidates exposed by the currently addressed eUICC transport.</summary>
+    public Task<IReadOnlyList<string>> GetEidsAsync(CancellationToken ct = default)
     {
-        var profiles = await ExecuteSessionAsync(client => client.GetProfilesInfoAsync(ct), ct).ConfigureAwait(false);
+        return ExecuteSessionAsync(client => client.GetEidsAsync(ct), ct);
+    }
+
+    public Task<List<Profile>> ListProfilesAsync(CancellationToken ct = default)
+        => ListProfilesAsync(DefaultAid, ct);
+
+    public async Task<List<Profile>> ListProfilesAsync(string? euiccAid, CancellationToken ct = default)
+    {
+        var aid = ResolveAid(euiccAid);
+        var profiles = await ExecuteSessionForAidAsync(aid, client => client.GetProfilesInfoAsync(ct), ct).ConfigureAwait(false);
+        foreach (var profile in profiles)
+        {
+            profile.EuiccAid = aid;
+            profile.IsCurrentlyAddressable = true;
+        }
         try { ProfilesUpdated?.Invoke(this, new EuiccProfilesChangedEventArgs(profiles)); } catch { }
         EventBus?.Publish("euicc.profiles.listed", "EuiccManager", profiles);
         return profiles;
@@ -94,11 +125,124 @@ public class EuiccManager
         return list.FirstOrDefault(p => p.State == ProfileState.Enabled);
     }
 
-    public async Task SwitchProfileAsync(string iccidOrAid, bool refresh = true, CancellationToken ct = default)
+    public async Task<Profile?> GetActiveProfileAsync(string? euiccAid, CancellationToken ct = default)
+    {
+        var list = await ListProfilesAsync(euiccAid, ct).ConfigureAwait(false);
+        return list.FirstOrDefault(p => p.State == ProfileState.Enabled);
+    }
+
+    public async Task<IReadOnlyList<EuiccInventoryEntry>> GetInventoryAsync(CancellationToken ct = default)
+    {
+        await _sessionGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var aids = await DiscoverEuiccAidsWithoutGateAsync(ct).ConfigureAwait(false);
+            var entries = new List<EuiccInventoryEntry>();
+            Exception? lastError = null;
+            foreach (var aid in aids)
+            {
+                try
+                {
+                    var entry = await ReadInventoryEntryWithoutGateAsync(aid, ct).ConfigureAwait(false);
+                    if (!entries.Any(existing =>
+                        !string.IsNullOrWhiteSpace(entry.Eid) &&
+                        existing.Eid.Equals(entry.Eid, StringComparison.OrdinalIgnoreCase)))
+                        entries.Add(entry);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    lastError = ex;
+                }
+            }
+
+            if (entries.Count > 0) return entries;
+            throw lastError ?? new InvalidOperationException("未检测到可用 eUICC ISD-R 应用。");
+        }
+        finally
+        {
+            _sessionGate.Release();
+        }
+    }
+
+    private async Task<IReadOnlyList<string>> DiscoverEuiccAidsWithoutGateAsync(CancellationToken ct)
+    {
+        // eSTK cards expose two independent secure elements. Do not append
+        // standard AIDs after finding them: the standard one aliases an eSTK storage.
+        if (await CanOpenAidWithoutGateAsync(EstkProductAid, ct).ConfigureAwait(false))
+        {
+            var estk = new List<string>();
+            foreach (var aid in new[] { EstkSe0IsdrAid, EstkSe1IsdrAid })
+            {
+                if (await CanOpenAidWithoutGateAsync(aid, ct).ConfigureAwait(false)) estk.Add(aid);
+            }
+            if (estk.Count > 0) return estk;
+        }
+
+        var generic = new List<string>();
+        foreach (var aid in new[] { Sgp22Client.IsdrAidStandard, XeSimIsdrAid })
+        {
+            if (await CanOpenAidWithoutGateAsync(aid, ct).ConfigureAwait(false)) generic.Add(aid);
+        }
+        return generic;
+    }
+
+    private async Task<bool> CanOpenAidWithoutGateAsync(string aid, CancellationToken ct)
     {
         try
         {
-            await ExecuteSessionAsync(async client =>
+            var channel = await Transport.OpenLogicalChannelAsync(aid, ct).ConfigureAwait(false);
+            using var cleanupCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            await Transport.CloseLogicalChannelAsync(channel, cleanupCts.Token).ConfigureAwait(false);
+            return true;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch { return false; }
+    }
+
+    private async Task<EuiccInventoryEntry> ReadInventoryEntryWithoutGateAsync(string aid, CancellationToken ct)
+    {
+        var channel = await Transport.OpenLogicalChannelAsync(aid, ct).ConfigureAwait(false);
+        try
+        {
+            var client = new Sgp22Client(Transport, channel);
+            string eid;
+            try { eid = await client.GetEIDAsync(ct).ConfigureAwait(false); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // A few older cards expose ES10.GetProfilesInfo but omit EID.
+                // Keep that independently selected AID usable instead of
+                // misreporting an eUICC as an ordinary SIM.
+                eid = string.Empty;
+            }
+            var profiles = await client.GetProfilesInfoAsync(ct).ConfigureAwait(false);
+            foreach (var profile in profiles)
+            {
+                if (!string.IsNullOrWhiteSpace(eid)) profile.Eid = eid;
+                profile.EuiccAid = aid;
+                profile.IsCurrentlyAddressable = true;
+            }
+            return new EuiccInventoryEntry(eid, aid, profiles);
+        }
+        finally
+        {
+            using var cleanupCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            await Transport.CloseLogicalChannelAsync(channel, cleanupCts.Token).ConfigureAwait(false);
+        }
+    }
+
+    private string ResolveAid(string? aid) => string.IsNullOrWhiteSpace(aid) ? DefaultAid : aid.Trim().ToUpperInvariant();
+
+    public Task SwitchProfileAsync(string iccidOrAid, bool refresh = true, CancellationToken ct = default)
+        => SwitchProfileAsync(iccidOrAid, null, refresh, ct);
+
+    public async Task SwitchProfileAsync(string iccidOrAid, string? euiccAid, bool refresh = true, CancellationToken ct = default)
+    {
+        try
+        {
+            await ExecuteSessionForAidAsync(ResolveAid(euiccAid), async client =>
             {
                 // 1. Enable target profile
                 await client.EnableProfileAsync(iccidOrAid, refresh, ct).ConfigureAwait(false);
@@ -114,11 +258,14 @@ public class EuiccManager
         }
     }
 
-    public async Task DisableProfileAsync(string iccidOrAid, bool refresh = true, CancellationToken ct = default)
+    public Task DisableProfileAsync(string iccidOrAid, bool refresh = true, CancellationToken ct = default)
+        => DisableProfileAsync(iccidOrAid, null, refresh, ct);
+
+    public async Task DisableProfileAsync(string iccidOrAid, string? euiccAid, bool refresh = true, CancellationToken ct = default)
     {
         try
         {
-            await ExecuteSessionAsync(client => client.DisableProfileAsync(iccidOrAid, refresh, ct), ct).ConfigureAwait(false);
+            await ExecuteSessionForAidAsync(ResolveAid(euiccAid), client => client.DisableProfileAsync(iccidOrAid, refresh, ct), ct).ConfigureAwait(false);
             try { OperationCompleted?.Invoke(this, new EuiccOperationEventArgs("Disable", targetIccidOrAid: iccidOrAid, success: true)); } catch { }
             EventBus?.Publish("euicc.profile.disabled", "EuiccManager", iccidOrAid);
         }
@@ -129,11 +276,14 @@ public class EuiccManager
         }
     }
 
-    public async Task DeleteProfileAsync(string iccidOrAid, CancellationToken ct = default)
+    public Task DeleteProfileAsync(string iccidOrAid, CancellationToken ct = default)
+        => DeleteProfileAsync(iccidOrAid, null, ct);
+
+    public async Task DeleteProfileAsync(string iccidOrAid, string? euiccAid, CancellationToken ct = default)
     {
         try
         {
-            await ExecuteSessionAsync(client => client.DeleteProfileAsync(iccidOrAid, ct), ct).ConfigureAwait(false);
+            await ExecuteSessionForAidAsync(ResolveAid(euiccAid), client => client.DeleteProfileAsync(iccidOrAid, ct), ct).ConfigureAwait(false);
             try { OperationCompleted?.Invoke(this, new EuiccOperationEventArgs("Delete", targetIccidOrAid: iccidOrAid, success: true)); } catch { }
             EventBus?.Publish("euicc.profile.deleted", "EuiccManager", iccidOrAid);
         }
@@ -144,11 +294,14 @@ public class EuiccManager
         }
     }
 
-    public async Task RenameProfileAsync(string iccidOrAid, string nickname, CancellationToken ct = default)
+    public Task RenameProfileAsync(string iccidOrAid, string nickname, CancellationToken ct = default)
+        => RenameProfileAsync(iccidOrAid, nickname, null, ct);
+
+    public async Task RenameProfileAsync(string iccidOrAid, string nickname, string? euiccAid, CancellationToken ct = default)
     {
         try
         {
-            await ExecuteSessionAsync(client => client.SetNicknameAsync(iccidOrAid, nickname, ct), ct).ConfigureAwait(false);
+            await ExecuteSessionForAidAsync(ResolveAid(euiccAid), client => client.SetNicknameAsync(iccidOrAid, nickname, ct), ct).ConfigureAwait(false);
             try { OperationCompleted?.Invoke(this, new EuiccOperationEventArgs("Rename", targetIccidOrAid: iccidOrAid, nickname: nickname, success: true)); } catch { }
             EventBus?.Publish("euicc.profile.renamed", "EuiccManager", new { Target = iccidOrAid, Nickname = nickname });
         }
@@ -171,8 +324,10 @@ public class EuiccManager
         IProgress<EuiccDownloadProgress>? progress = null,
         CancellationToken ct = default,
         bool allowUntrustedTls = false,
-        bool allowRetryAfterUncertain = false)
+        bool allowRetryAfterUncertain = false,
+        string? euiccAid = null)
     {
+        var targetAid = ResolveAid(euiccAid);
         var parsedCode = EuiccActivationCode.Parse(activationCode);
         var normalizedImei = new string((imei ?? string.Empty).Where(char.IsDigit).ToArray());
         if (!IsValidImei(normalizedImei))
@@ -189,7 +344,7 @@ public class EuiccManager
         try
         {
             progress?.Report(new EuiccDownloadProgress(5, "正在读取 eUICC 并执行写入前检查"));
-            var before = await ListProfilesWithoutGateAsync(ct).ConfigureAwait(false);
+            var before = await ListProfilesWithoutGateAsync(targetAid, ct).ConfigureAwait(false);
             var beforeIccids = before.Select(p => p.ICCID).Where(v => !string.IsNullOrWhiteSpace(v)).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             if (EuiccDownloadJournal.Get(fingerprint) is { } previousAttempt)
@@ -219,7 +374,7 @@ public class EuiccManager
 
             try
             {
-                var info = await GetEuiccInfoWithoutGateAsync(ct).ConfigureAwait(false);
+                var info = await GetEuiccInfoWithoutGateAsync(targetAid, ct).ConfigureAwait(false);
                 if (info.FreeNvramBytes is > 0 and < 81_920)
                     throw new InvalidOperationException($"eUICC 剩余空间仅 {info.FreeNvramBytes} 字节，低于 80 KB 安全阈值；请先删除不用的 Profile。");
             }
@@ -244,7 +399,7 @@ public class EuiccManager
             });
             try
             {
-                workerResult = await downloader.DownloadAsync(parsedCode, normalizedImei, normalizedConfirmationCode, trackedProgress, ct).ConfigureAwait(false);
+                workerResult = await downloader.DownloadAsync(parsedCode, normalizedImei, normalizedConfirmationCode, targetAid, trackedProgress, ct).ConfigureAwait(false);
                 reportedIccid = workerResult.Iccid;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -264,7 +419,7 @@ public class EuiccManager
                 try
                 {
                     if (attempt > 0) await Task.Delay(TimeSpan.FromSeconds(1), ct).ConfigureAwait(false);
-                    after = await ListProfilesWithoutGateAsync(ct).ConfigureAwait(false);
+                    after = await ListProfilesWithoutGateAsync(targetAid, ct).ConfigureAwait(false);
                     break;
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
@@ -339,9 +494,9 @@ public class EuiccManager
         }
     }
 
-    private async Task<List<Profile>> ListProfilesWithoutGateAsync(CancellationToken ct)
+    private async Task<List<Profile>> ListProfilesWithoutGateAsync(string aid, CancellationToken ct)
     {
-        var channel = await Transport.OpenLogicalChannelAsync(DefaultAid, ct).ConfigureAwait(false);
+        var channel = await Transport.OpenLogicalChannelAsync(aid, ct).ConfigureAwait(false);
         try
         {
             return await new Sgp22Client(Transport, channel).GetProfilesInfoAsync(ct).ConfigureAwait(false);
@@ -358,9 +513,9 @@ public class EuiccManager
         public void Report(EuiccDownloadProgress value) => callback(value);
     }
 
-    private async Task<EuiccInfo> GetEuiccInfoWithoutGateAsync(CancellationToken ct)
+    private async Task<EuiccInfo> GetEuiccInfoWithoutGateAsync(string aid, CancellationToken ct)
     {
-        var channel = await Transport.OpenLogicalChannelAsync(DefaultAid, ct).ConfigureAwait(false);
+        var channel = await Transport.OpenLogicalChannelAsync(aid, ct).ConfigureAwait(false);
         try
         {
             return await new Sgp22Client(Transport, channel).GetEuiccInfoAsync(ct).ConfigureAwait(false);

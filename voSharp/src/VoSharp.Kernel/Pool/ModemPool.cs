@@ -1,7 +1,10 @@
 using System.Collections.Concurrent;
 using System.IO.Ports;
+using System.Security.Cryptography;
+using System.Text;
 using VoSharp.Common.Events;
 using VoSharp.Kernel.Events;
+using VoSharp.Sim.Pcsc;
 
 namespace VoSharp.Kernel.Pool;
 
@@ -355,12 +358,82 @@ public class ModemPool : IAsyncDisposable
             }
         }
 
+        // PC/SC readers are not serial ports, so include them in the same user
+        // initiated scan. A reader becomes a normal slot only after EF.ICCID,
+        // EF.IMSI and ADF.USIM have all been verified.
+        foreach (var readerName in ListPcscReaders())
+        {
+            var pcscSlot = await AddOrUpdatePcscSlotAsync(readerName, ct).ConfigureAwait(false);
+            if (pcscSlot != null)
+                discovered.Add(pcscSlot);
+        }
+
         return discovered;
         }
         finally
         {
             _discoveryGate.Release();
         }
+    }
+
+    private static IReadOnlyList<string> ListPcscReaders()
+    {
+        try
+        {
+            using var reader = new PcscReader();
+            return reader.Initialize() ? reader.ListReaders() : Array.Empty<string>();
+        }
+        catch
+        {
+            // The Smart Card service can legitimately be disabled on machines
+            // that only use serial modems. Do not make that break COM discovery.
+            return Array.Empty<string>();
+        }
+    }
+
+    private async Task<ModemSlot?> AddOrUpdatePcscSlotAsync(string readerName, CancellationToken ct)
+    {
+        var fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(readerName)))[..12].ToLowerInvariant();
+        var id = $"pcsc-{fingerprint}";
+
+        if (_slots.TryGetValue(id, out var existing))
+        {
+            if (!existing.IsPcscReader) return null;
+            return await existing.AttachPcscAsync(readerName, ct).ConfigureAwait(false) ? existing : null;
+        }
+
+        var slot = new ModemSlot(id, $"PC/SC · {readerName}", 0, "PC/SC 读卡器", eventBus: _eventBus);
+        slot.StateChanged += (_, args) =>
+        {
+            try { SlotStateChanged?.Invoke(this, args); } catch { }
+        };
+
+        if (!await slot.AttachPcscAsync(readerName, ct).ConfigureAwait(false))
+        {
+            await slot.DisposeAsync().ConfigureAwait(false);
+            return null;
+        }
+
+        if (!_slots.TryAdd(id, slot))
+        {
+            await slot.DisposeAsync().ConfigureAwait(false);
+            return _slots.TryGetValue(id, out var concurrent) ? concurrent : null;
+        }
+
+        lock (_lock)
+        {
+            if (_activeSlotId == null || !_slots.ContainsKey(_activeSlotId))
+            {
+                _activeSlotId = id;
+                slot.IsActive = true;
+                try { ActiveSlotChanged?.Invoke(this, new ActiveSlotChangedEventArgs(null, id, slot)); } catch { }
+            }
+        }
+
+        try { SlotAdded?.Invoke(this, slot); } catch { }
+        try { SlotListChanged?.Invoke(this, new SlotListChangedEventArgs(_slots.Values.ToList())); } catch { }
+        _eventBus.Publish("pool.slot.added", "ModemPool", slot.GetDiagnosticInfo());
+        return slot;
     }
 
     /// <summary>
