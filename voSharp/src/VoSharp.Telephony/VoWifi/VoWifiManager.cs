@@ -219,7 +219,9 @@ public class VoWifiManager : IDisposable
         SimIdentity Sim,
         string? CustomEpdg,
         IkeProposalSuite Suite,
-        string? ProxyUrl);
+        string? ProxyUrl,
+        bool ForceNatt,
+        IPAddress? LocalAddress);
 
     // IKEv2 Configuration Attribute type codes (RFC 7296 §3.15.1)
     private const ushort CpAttrInternalIp4Address = 1;
@@ -296,14 +298,18 @@ public class VoWifiManager : IDisposable
         string? customEpdg = null,
         IkeProposalSuite suite = IkeProposalSuite.Auto,
         string? proxyUrl = null,
+        bool forceNatt = false,
+        IPAddress? localAddress = null,
         CancellationToken ct = default) =>
-        await StartVoWifiAsync(new[] { sim }, customEpdg, suite, proxyUrl, ct).ConfigureAwait(false);
+        await StartVoWifiAsync(new[] { sim }, customEpdg, suite, proxyUrl, forceNatt, localAddress, ct).ConfigureAwait(false);
 
     public async Task<bool> StartVoWifiAsync(
         IReadOnlyList<SimIdentity> identityCandidates,
         string? customEpdg = null,
         IkeProposalSuite suite = IkeProposalSuite.Auto,
         string? proxyUrl = null,
+        bool forceNatt = false,
+        IPAddress? localAddress = null,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(identityCandidates);
@@ -321,7 +327,7 @@ public class VoWifiManager : IDisposable
         var started = false;
         for (var index = 0; index < candidates.Length; index++)
         {
-            var options = new VoWifiStartOptions(candidates[index], customEpdg, suite, proxyUrl ?? ProxyUrl);
+            var options = new VoWifiStartOptions(candidates[index], customEpdg, suite, proxyUrl ?? ProxyUrl, forceNatt, localAddress);
             _lastStartOptions = options;
             if (candidates.Length > 1)
                 EventBus?.Publish(EventTopics.SystemLog, "VoWiFi",
@@ -467,6 +473,8 @@ public class VoWifiManager : IDisposable
                         effectiveProxy,
                         deviceImei,
                         diagnosticLog: message => EventBus?.Publish(EventTopics.SystemLog, "IKE", message),
+                        forceNatt: options.ForceNatt,
+                        localAddress: options.LocalAddress,
                         ct: ct).ConfigureAwait(false);
 
                     if (ikeResult.Success && !string.IsNullOrEmpty(ikeResult.AssignedIp) && !string.IsNullOrEmpty(ikeResult.PcscfIp))

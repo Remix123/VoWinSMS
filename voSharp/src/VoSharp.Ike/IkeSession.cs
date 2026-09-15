@@ -32,7 +32,9 @@ public sealed record IkeSessionRequest(
     IReadOnlyList<EspSuite>? ChildSuites = null,
     string? Imeisv = null,
     IkeAddressFamilyMode AddressFamilyMode = IkeAddressFamilyMode.Ipv6,
-    Action<string>? DiagnosticLog = null
+    Action<string>? DiagnosticLog = null,
+    bool ForceNatt = false,
+    IPAddress? LocalAddress = null
 );
 
 public sealed record IkeSessionResult(
@@ -66,6 +68,9 @@ public static class IkeSession
     private const ushort NotifyNatDetectionSourceIp = 16388;
     private const ushort NotifyNatDetectionDestinationIp = 16389;
     private const ushort NotifyCookie = 16390;
+    // RFC 7383.  Carrier ePDGs commonly include this in their IKE_SA_INIT
+    // fingerprint and may fragment later IKE_AUTH responses.
+    private const ushort NotifyIkeFragmentationSupported = 16430;
     private const ushort NotifyEapOnlyAuthentication = 16417;
     // 3GPP TS 24.302 DEVICE_IDENTITY.  Keep this private-use value distinct
     // from the IANA status notification range.
@@ -103,12 +108,23 @@ public static class IkeSession
             throw new ArgumentException("All IKE proposals in one IKE_SA_INIT must use the KE payload's DH group.", nameof(request));
 
         var socksClient = request.Socks5Client ?? VoSharp.Ike.Transport.Socks5Client.TryParse(request.ProxyUrl);
-        var transport = new IkeTransport(request.EpdgIp, initialPort: request.EpdgPort, socks5Client: socksClient);
+        var transport = new IkeTransport(
+            request.EpdgIp,
+            initialPort: request.EpdgPort,
+            socks5Client: socksClient,
+            diagnosticLog: message => request.DiagnosticLog?.Invoke(message),
+            localAddress: request.LocalAddress);
         var eapSucceeded = false;
         var stage = "IKE_SA_INIT";
         void Trace(string message) => request.DiagnosticLog?.Invoke(message);
         try
         {
+            if (request.ForceNatt)
+            {
+                transport.FloatTo4500();
+                Trace("IKE stage=IKE_SA_INIT forcing NAT-T UDP/4500 for this diagnostic attempt.");
+            }
+
             // ── 1. IKE_SA_INIT ──────────────────────────────────────────────
             var initiatorSpi = GenerateNonZeroUInt64();
             var initiatorNonce = new byte[IkeDefaults.NonceLength];
@@ -141,7 +157,8 @@ public static class IkeSession
                 new(IkePayloadType.KeyExchange, keBody),
                 new(IkePayloadType.Nonce, initiatorNonce),
                 MakeNotify(NotifyNatDetectionSourceIp, natSrcHash),
-                MakeNotify(NotifyNatDetectionDestinationIp, natDstHash)
+                MakeNotify(NotifyNatDetectionDestinationIp, natDstHash),
+                MakeNotify(NotifyIkeFragmentationSupported, Array.Empty<byte>())
             };
 
             var initRequest = new IkeWire.IkeMessage

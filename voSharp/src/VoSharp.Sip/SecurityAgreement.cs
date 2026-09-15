@@ -165,16 +165,24 @@ public static class SecurityAgreementBuilder
                 continue;
             }
 
-            if (!TryGet(parameters, "prot", out var prot) ||
-                !prot.Equals("esp", StringComparison.OrdinalIgnoreCase))
+            // RFC 3329 defines esp/trans/null as the defaults for an
+            // ipsec-3gpp mechanism.  Some P-CSCFs (including Vodafone DE)
+            // legitimately omit one or more of these fields in
+            // Security-Server, even though they were explicit in our offer.
+            // Keep rejecting an explicitly incompatible value, but do not
+            // mistake an omitted optional value for one.
+            var hasProtocol = TryGet(parameters, "prot", out var prot);
+            prot ??= "esp";
+            if (!prot.Equals("esp", StringComparison.OrdinalIgnoreCase))
             {
-                diagnostics.Add($"{label}: rejected (prot={prot ?? "missing"}; expected esp).");
+                diagnostics.Add($"{label}: rejected (prot={prot}; expected esp).");
                 continue;
             }
-            if (!TryGet(parameters, "mod", out var mod) ||
-                !mod.Equals("trans", StringComparison.OrdinalIgnoreCase))
+            var hasMode = TryGet(parameters, "mod", out var mod);
+            mod ??= "trans";
+            if (!mod.Equals("trans", StringComparison.OrdinalIgnoreCase))
             {
-                diagnostics.Add($"{label}: rejected (mod={mod ?? "missing"}; expected trans).");
+                diagnostics.Add($"{label}: rejected (mod={mod}; expected trans).");
                 continue;
             }
 
@@ -184,10 +192,11 @@ public static class SecurityAgreementBuilder
                 diagnostics.Add($"{label}: rejected (alg={alg ?? "missing"}; offered=[{string.Join(',', allowedIntegrity)}]).");
                 continue;
             }
-            if (!TryGet(parameters, "ealg", out var ealg) ||
-                !Contains(allowedEncryption, ealg))
+            var hasEncryption = TryGet(parameters, "ealg", out var ealg);
+            ealg ??= "null";
+            if (!Contains(allowedEncryption, ealg))
             {
-                diagnostics.Add($"{label}: rejected (ealg={ealg ?? "missing"}; offered=[{string.Join(',', allowedEncryption)}]).");
+                diagnostics.Add($"{label}: rejected (ealg={ealg}; offered=[{string.Join(',', allowedEncryption)}]).");
                 continue;
             }
             alg = alg.ToLowerInvariant();
@@ -232,7 +241,13 @@ public static class SecurityAgreementBuilder
                 PcscfServerSpi: pcscfServerSpi,
                 PcscfClientPort: pcscfClientPort,
                 PcscfServerPort: pcscfServerPort)));
-            diagnostics.Add($"{label}: compatible (q={q.ToString(CultureInfo.InvariantCulture)}; alg={alg}; ealg={ealg}; prot=esp; mod=trans; ports valid).");
+            var defaults = string.Join(',', new[]
+            {
+                hasProtocol ? null : "prot",
+                hasMode ? null : "mod",
+                hasEncryption ? null : "ealg"
+            }.Where(static value => value is not null));
+            diagnostics.Add($"{label}: compatible (q={q.ToString(CultureInfo.InvariantCulture)}; alg={alg}; ealg={ealg}; prot=esp; mod=trans; ports valid{(defaults.Length == 0 ? string.Empty : $"; defaults={defaults}")}).");
         }
 
         var agreement = candidates.Count == 0

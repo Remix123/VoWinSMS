@@ -38,6 +38,7 @@ namespace VoWin.ViewModels.Pages
         private readonly ICollectionView? _filteredLogsView;
         private readonly System.Windows.Threading.DispatcherTimer _heartbeatTimer;
         private readonly SemaphoreSlim _simSwitchGate = new(1, 1);
+        private readonly SemaphoreSlim _homeRouteGate = new(1, 1);
         private int _refreshNotificationScheduled;
         private int _simSwitchLoadVersion;
         private bool _isLoadingSimSwitches;
@@ -830,27 +831,95 @@ namespace VoWin.ViewModels.Pages
                 return;
             }
 
-            if (value.IsFollowPlmn)
-            {
-                _kernelService.RemoveIccidRoute(sim.Iccid);
-                StatusMessage = "已删除 ICCID 覆盖；当前 SIM 改为跟随 IMSI MCC/PLMN 国家规则。";
-            }
-            else if (value.NodeId == "__LEGACY_ICCID_URL__")
-            {
-                return;
-            }
-            else
-            {
-                _kernelService.SaveIccidRoute(
-                    sim.Iccid,
-                    value.NodeId,
-                    slot.CardNickname ?? sim.OperatorName,
-                    sim.Imsi,
-                    sim.PhoneNumber);
-                StatusMessage = $"ICCID 路由已立即更新：{value.DisplayName}。正在使用的旧隧道需重连后切换出口。";
-            }
+            _ = ApplyHomeRouteAsync(slot, sim, value);
+        }
 
-            _ = LoadVoWifiRouteAsync(slot);
+        private async Task ApplyHomeRouteAsync(ModemSlot slot, SimIdentity sim, EgressOptionModel value)
+        {
+            await _homeRouteGate.WaitAsync();
+            try
+            {
+                // A delayed SelectedItem notification from a slot change must
+                // never write a route for a card that is no longer on screen.
+                if (!ReferenceEquals(slot, SelectedSlot) || !ReferenceEquals(value, SelectedHomeRouteOption))
+                    return;
+
+                if (value.IsFollowPlmn)
+                {
+                    _kernelService.RemoveIccidRoute(sim.Iccid);
+                }
+                else if (value.NodeId == "__LEGACY_ICCID_URL__")
+                {
+                    return;
+                }
+                else
+                {
+                    _kernelService.SaveIccidRoute(
+                        sim.Iccid,
+                        value.NodeId,
+                        slot.CardNickname ?? sim.OperatorName,
+                        sim.Imsi,
+                        sim.PhoneNumber);
+                }
+
+                // Saving the rule is not enough: the running kernel keeps its
+                // own per-slot URL. Apply the resolved result now so the next
+                // IKE session cannot accidentally inherit a stale proxy.
+                var effectiveProxy = _kernelService.ResolveEgressProxyForSlot(slot.Id);
+                if (!_kernelService.SetSlotProxy(slot.Id, effectiveProxy))
+                {
+                    StatusMessage = "路由已保存，但无法写入 VoWiFi 核心；请检查所选节点是否为 SOCKS5。";
+                    await LoadVoWifiRouteAsync(slot);
+                    return;
+                }
+
+                slot.ProxyUrl = effectiveProxy;
+                await LoadVoWifiRouteAsync(slot);
+
+                // A SOCKS route belongs to the IKE/ESP transport. Changing it
+                // cannot alter an already-negotiated SA, so reconnect an active
+                // or in-flight session immediately rather than claiming the
+                // new route has taken effect while it is still on the old one.
+                var shouldReconnect = slot.VoWifi.State is
+                    VoWifiState.ResolvingEpdg or
+                    VoWifiState.ConnectingIkev2 or
+                    VoWifiState.AuthenticatingEapAka or
+                    VoWifiState.IpsecTunnelEstablished or
+                    VoWifiState.ImsRegistering or
+                    VoWifiState.ImsRegistered;
+
+                if (shouldReconnect)
+                {
+                    StatusMessage = "代理规则已更新，正在用新出口重连 VoWiFi…";
+                    var stopped = await _kernelService.StopVoWifiAsync(slot.Id);
+                    if (!stopped)
+                    {
+                        StatusMessage = "代理规则已写入核心，但旧 VoWiFi 隧道未能停止；请手动重新连接。";
+                        return;
+                    }
+
+                    var started = await _kernelService.StartVoWifiAsync(slot.Id);
+                    StatusMessage = started
+                        ? "代理规则已生效，VoWiFi 正在使用新出口重新注册。"
+                        : "代理规则已写入核心，但用新出口重连失败；请导出本次诊断日志。";
+                }
+                else
+                {
+                    StatusMessage = value.IsFollowPlmn
+                        ? "已切换为跟随 IMSI MCC/PLMN 国家规则，并已写入 VoWiFi 核心。"
+                        : $"ICCID 路由已立即应用至 VoWiFi 核心：{value.DisplayName}。";
+                }
+
+                NotifyAll();
+            }
+            catch (Exception ex)
+            {
+                StatusMessage = $"应用代理规则失败: {ex.Message}";
+            }
+            finally
+            {
+                _homeRouteGate.Release();
+            }
         }
 
         private async Task LoadSimSwitchesAsync(ModemSlot slot)

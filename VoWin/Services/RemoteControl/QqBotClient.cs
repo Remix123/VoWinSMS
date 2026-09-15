@@ -128,8 +128,8 @@ internal sealed class QqBotClient : IDisposable
         var url = $"{ApiBase}/v2/{scope}/{Uri.EscapeDataString(target.ConversationId)}/messages";
         var body = new Dictionary<string, object?>
         {
-            ["content"] = text.Length > 1900 ? text[..1900] : text,
-            ["msg_type"] = 0,
+            ["markdown"] = new { content = text.Length > 3900 ? text[..3900] : text },
+            ["msg_type"] = 2,
             ["msg_seq"] = Random.Shared.Next(1, 65535)
         };
         if (!string.IsNullOrWhiteSpace(target.MessageId)) body["msg_id"] = target.MessageId;

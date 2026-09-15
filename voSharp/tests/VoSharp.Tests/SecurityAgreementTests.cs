@@ -120,6 +120,22 @@ public class SecurityAgreementTests
     }
 
     [Fact]
+    public void AcceptsRfc3329DefaultSecurityServerParameters()
+    {
+        // RFC 3329 defaults omitted prot/mod/ealg to esp/trans/null. Vodafone
+        // DE sends this compact form after the AKA challenge.
+        const string securityServer =
+            "ipsec-3gpp;q=1.000;alg=hmac-sha-1-96;spi-c=2001;spi-s=2002;port-c=50601;port-s=50600";
+
+        var evaluation = SecurityAgreementBuilder.EvaluateSecurityServer(securityServer, Proposal);
+
+        Assert.NotNull(evaluation.Agreement);
+        Assert.Equal("null", evaluation.Agreement!.Selected.EncryptionAlgorithm);
+        Assert.Contains(evaluation.CandidateDiagnostics, message =>
+            message.Contains("defaults=prot,mod,ealg", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void RejectsCollidingSpis()
     {
         // spi-s collides with the SPI we offered, which would make the SAs indistinguishable.

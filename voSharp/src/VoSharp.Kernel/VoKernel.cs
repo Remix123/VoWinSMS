@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Net;
 using VoSharp.Common.Aka;
 using VoSharp.Common.Events;
 using VoSharp.Common.Utils;
@@ -1368,6 +1369,8 @@ public class VoKernel : IVoKernel
                         string? slotId = null;
                         string? proxyArg = null;
                         string? customEpdg = null;
+                        IPAddress? localAddress = null;
+                        var forceNatt = false;
                         var suite = IkeProposalSuite.Auto;
 
                         for (int i = 2; i < parts.Length; i++)
@@ -1380,6 +1383,15 @@ public class VoKernel : IVoKernel
                             else if (arg.Equals("--proxy", StringComparison.OrdinalIgnoreCase) && i + 1 < parts.Length)
                             {
                                 proxyArg = parts[++i];
+                            }
+                            else if (arg.Equals("--force-natt", StringComparison.OrdinalIgnoreCase))
+                            {
+                                forceNatt = true;
+                            }
+                            else if (arg.Equals("--local-address", StringComparison.OrdinalIgnoreCase) && i + 1 < parts.Length)
+                            {
+                                if (!IPAddress.TryParse(parts[++i], out localAddress))
+                                    return new KernelCommandResult(false, "--local-address must be a valid IPv4 or IPv6 address.");
                             }
                             else if (Enum.TryParse<IkeProposalSuite>(arg, true, out var s))
                             {
@@ -1411,7 +1423,8 @@ public class VoKernel : IVoKernel
                             voWifiToUse.ProxyUrl = proxyArg.Equals("direct", StringComparison.OrdinalIgnoreCase) ? null : proxyArg;
                         }
 
-                        bool started = await voWifiToUse.StartVoWifiAsync(simToUse, customEpdg, suite, proxyUrl: voWifiToUse.ProxyUrl, ct: ct).ConfigureAwait(false);
+                        bool started = await voWifiToUse.StartVoWifiAsync(
+                            simToUse, customEpdg, suite, proxyUrl: voWifiToUse.ProxyUrl, forceNatt: forceNatt, localAddress: localAddress, ct: ct).ConfigureAwait(false);
                         var diag = voWifiToUse.GetDiagnosticInfo();
                         var tunnelIp = !string.IsNullOrWhiteSpace(diag.Tunnel?.AssignedIPv4)
                             ? diag.Tunnel.AssignedIPv4
@@ -1444,7 +1457,7 @@ public class VoKernel : IVoKernel
                             SupportedSuites = new[] { "Modern (ECP-256 / SHA256 / AES-256)", "Standard (MODP-2048 / SHA256 / AES-128)", "Legacy (MODP-1024 / SHA1 / AES-128)" }
                         });
                     }
-                    return new KernelCommandResult(false, "Usage: vowifi <status|start|stop|info> [custom_epdg] [modern|standard|legacy|auto] [--slot <id>] [--proxy <socks5_url>]");
+                    return new KernelCommandResult(false, "Usage: vowifi <status|start|stop|info> [custom_epdg] [modern|standard|legacy|auto] [--slot <id>] [--proxy <socks5_url>] [--force-natt] [--local-address <ip>]");
 
                 case "dtmf":
                     if (parts.Length < 2)

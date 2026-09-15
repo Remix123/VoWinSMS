@@ -37,7 +37,9 @@ public sealed class CSharpIkeBackend : IIkeBackend
         string? proxyUrl = null,
         string? imei = null,
         Action<string>? diagnosticLog = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool forceNatt = false,
+        IPAddress? localAddress = null)
     {
         ArgumentNullException.ThrowIfNull(sim);
         ArgumentNullException.ThrowIfNull(akaProvider);
@@ -115,7 +117,9 @@ public sealed class CSharpIkeBackend : IIkeBackend
                 Suites: ikeSuites,
                 ChildSuites: childSuites,
                 AddressFamilyMode: addressFamily,
-                DiagnosticLog: diagnosticLog), ct).ConfigureAwait(false);
+                DiagnosticLog: diagnosticLog,
+                ForceNatt: forceNatt,
+                LocalAddress: localAddress), ct).ConfigureAwait(false);
 
             // An ePDG that answers a dual-family CFG_REQUEST with a mismatched pair (an IPv6
             // address but an IPv4 P-CSCF) succeeds at IKE_AUTH yet leaves a tunnel that cannot

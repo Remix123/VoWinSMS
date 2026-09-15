@@ -11,6 +11,7 @@ Console.WriteLine("       Pure C# State Machine & Subsystem Orchestrator     ");
 Console.WriteLine("==========================================================");
 
 bool clientMode = args.Contains("--client");
+bool traceMode = args.Contains("--trace");
 
 if (clientMode)
 {
@@ -40,6 +41,15 @@ if (clientMode)
 
 // Daemon / Host Mode
 await using var kernel = new VoKernel();
+
+if (traceMode)
+{
+    kernel.EventBus.Subscribe(EventTopics.SystemLog, ev =>
+        Console.WriteLine($"[TRACE] {ev.Source}: {ev.Payload}"));
+    kernel.EventBus.Subscribe(EventTopics.SystemError, ev =>
+        Console.WriteLine($"[TRACE ERROR] {ev.Source}: {ev.Payload}"));
+    Console.WriteLine("[CLI] IKE / IMS diagnostic trace enabled.");
+}
 
 // Hook state changes for live console telemetry
 kernel.StateMachine.OnEnter(TelephonyState.SimReady, (from, to, payload) =>
@@ -199,7 +209,7 @@ Console.WriteLine("  sms read <index>              - Read SMS message by index")
 Console.WriteLine("  sms delete <index|all>        - Delete SMS message by index or all");
 Console.WriteLine("  sms send <num> <text>         - Send 3GPP PDU SMS (e.g. sms send 10086 CXCX)");
 Console.WriteLine("  vowifi status                 - Check VoWiFi & IMS registration status");
-Console.WriteLine("  vowifi start [epdg]           - Establish VoWiFi IPsec tunnel & IMS registration");
+Console.WriteLine("  vowifi start [epdg] [--force-natt] [--local-address <ip>] - Establish VoWiFi; diagnostic switches force UDP/4500 or a local NIC address");
 Console.WriteLine("  vowifi stop                   - Disconnect VoWiFi tunnel");
 Console.WriteLine("  vowifi info                   - Query 3GPP ePDG FQDN & resolved IP endpoints");
 Console.WriteLine("  call dial <num> / call <num>  - Dial phone call via VoWiFi SIP/RTP with live PC audio (e.g. call 185)");

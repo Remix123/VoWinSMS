@@ -178,7 +178,7 @@ public sealed class RemoteControlService : IRemoteControlService, IHostedService
             {
                 if (await TryPairAsync(message).ConfigureAwait(false))
                 {
-                    await SendReplyAsync(message, "绑定成功。发送“帮助”查看命令。").ConfigureAwait(false);
+                    await SendReplyAsync(message, "✅ **绑定成功**\n\n发送 `帮助` 查看可用命令。").ConfigureAwait(false);
                     return;
                 }
                 _lastActivity = $"{DateTime.Now:HH:mm:ss} 已拒绝未授权用户 {message.Channel} / {message.SenderId}";
@@ -195,7 +195,7 @@ public sealed class RemoteControlService : IRemoteControlService, IHostedService
         {
             _lastActivity = $"{DateTime.Now:HH:mm:ss} 远程命令失败：{ex.Message}";
             RaiseChanged();
-            try { await SendReplyAsync(message, $"处理失败：{ex.Message}").ConfigureAwait(false); } catch { }
+            try { await SendReplyAsync(message, RemoteMessageMarkdown.Error("处理失败", ex.Message)).ConfigureAwait(false); } catch { }
         }
         finally { gate.Release(); }
     }
@@ -233,16 +233,17 @@ public sealed class RemoteControlService : IRemoteControlService, IHostedService
         var settings = Settings;
         if (!settings.NotifyIncomingSms || (settings.NotifyOtpOnly && !sms.HasOtpCode)) return;
         var code = sms.ExtractedOtpCode;
+        var time = TimestampDisplayHelper.ToLocalDisplayTime(sms.Timestamp);
         var text = code == null
-            ? $"收到短信\n来自：{sms.SenderOrRecipient}\n时间：{TimestampDisplayHelper.ToLocalDisplayTime(sms.Timestamp):yyyy-MM-dd HH:mm:ss}\n内容：{sms.Text}"
-            : $"收到验证码：{code}\n来自：{sms.SenderOrRecipient}\n时间：{TimestampDisplayHelper.ToLocalDisplayTime(sms.Timestamp):yyyy-MM-dd HH:mm:ss}\n内容：{sms.Text}";
+            ? $"## 💬 收到短信\n\n- **来自**：{RemoteMessageMarkdown.Code(sms.SenderOrRecipient)}\n- **时间**：{time:yyyy-MM-dd HH:mm:ss}\n\n**短信内容**\n\n{RemoteMessageMarkdown.Quote(sms.Text)}"
+            : $"## 🔐 收到验证码\n\n### {RemoteMessageMarkdown.Code(code)}\n\n- **来自**：{RemoteMessageMarkdown.Code(sms.SenderOrRecipient)}\n- **时间**：{time:yyyy-MM-dd HH:mm:ss}\n\n**短信内容**\n\n{RemoteMessageMarkdown.Quote(sms.Text)}";
         await BroadcastAsync(text).ConfigureAwait(false);
     }
 
     private void OnIncomingCall(string number, string? slotId)
     {
         if (Settings.NotifyIncomingCalls)
-            _ = BroadcastAsync($"来电提醒\n号码：{number}\n卡槽：{slotId ?? _kernel.ActiveSlot?.Name ?? "当前卡"}\n可发送：接听 / 拒接");
+            _ = BroadcastAsync($"## 📞 来电提醒\n\n- **号码**：{RemoteMessageMarkdown.Code(number)}\n- **卡槽**：{RemoteMessageMarkdown.Escape(slotId ?? _kernel.ActiveSlot?.Name ?? "当前卡")}\n\n> 回复 `接听` 或 `拒接` 控制来电");
     }
 
     private async Task BroadcastAsync(string text)

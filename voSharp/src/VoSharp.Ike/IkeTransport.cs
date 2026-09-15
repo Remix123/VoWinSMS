@@ -19,6 +19,8 @@ public sealed class IkeTransport : IDisposable
     private readonly Channel<byte[]> _espChannel = Channel.CreateUnbounded<byte[]>();
     private readonly ConcurrentDictionary<(uint MessageId, IkeExchangeType Exchange), TaskCompletionSource<byte[]>> _pendingIkeResponses = new();
     private readonly Socks5Client? _socks5Client;
+    private readonly Action<string>? _diagnosticLog;
+    private readonly IPAddress? _localAddress;
 
     private Socket? _socket;
     private IPEndPoint _remoteEndpoint;
@@ -34,12 +36,22 @@ public sealed class IkeTransport : IDisposable
     public ChannelReader<byte[]> EspPackets => _espChannel.Reader;
     public Socks5Client? Socks5Proxy => _socks5Client;
 
-    public IkeTransport(IPAddress remoteIp, int initialPort = IkeDefaults.UdpPort, TimeSpan? timeout = null, Socks5Client? socks5Client = null)
+    public IkeTransport(
+        IPAddress remoteIp,
+        int initialPort = IkeDefaults.UdpPort,
+        TimeSpan? timeout = null,
+        Socks5Client? socks5Client = null,
+        Action<string>? diagnosticLog = null,
+        IPAddress? localAddress = null)
     {
         _remoteIp = remoteIp ?? throw new ArgumentNullException(nameof(remoteIp));
         _remoteEndpoint = new IPEndPoint(remoteIp, initialPort);
         _timeout = timeout ?? TimeSpan.FromSeconds(12);
         _socks5Client = socks5Client;
+        _diagnosticLog = diagnosticLog;
+        if (localAddress is not null && localAddress.AddressFamily != remoteIp.AddressFamily)
+            throw new ArgumentException("The requested local address must use the same IP family as the ePDG endpoint.", nameof(localAddress));
+        _localAddress = localAddress;
 
         InitSocket(bindPort: 0);
     }
@@ -60,8 +72,12 @@ public sealed class IkeTransport : IDisposable
                 _socket = new Socket(_socks5RelayEndpoint.AddressFamily, SocketType.Dgram, ProtocolType.Udp);
                 var any = _socks5RelayEndpoint.AddressFamily == AddressFamily.InterNetwork
                     ? IPAddress.Any : IPAddress.IPv6Any;
-                _socket.Bind(new IPEndPoint(any, 0));
+                var bindAddress = _localAddress?.AddressFamily == _socks5RelayEndpoint.AddressFamily
+                    ? _localAddress
+                    : any;
+                _socket.Bind(new IPEndPoint(bindAddress, 0));
                 _socket.Connect(_socks5RelayEndpoint);
+                Log($"IKE transport SOCKS5 UDP ready; relay={_socks5RelayEndpoint}; target={_remoteEndpoint}; local={LocalEndpoint}.");
                 return;
             }
             catch (Exception ex)
@@ -79,22 +95,26 @@ public sealed class IkeTransport : IDisposable
         {
             try
             {
-                var bindAddr = _remoteIp.AddressFamily == AddressFamily.InterNetwork ? IPAddress.Any : IPAddress.IPv6Any;
+                var bindAddr = GetBindAddress();
                 _socket.Bind(new IPEndPoint(bindAddr, bindPort));
             }
             catch
             {
                 // Fall back to dynamic port if specific bind failed
-                _socket.Bind(new IPEndPoint(_remoteIp.AddressFamily == AddressFamily.InterNetwork ? IPAddress.Any : IPAddress.IPv6Any, 0));
+                _socket.Bind(new IPEndPoint(GetBindAddress(), 0));
             }
         }
         else
         {
-            _socket.Bind(new IPEndPoint(_remoteIp.AddressFamily == AddressFamily.InterNetwork ? IPAddress.Any : IPAddress.IPv6Any, 0));
+            _socket.Bind(new IPEndPoint(GetBindAddress(), 0));
         }
 
         _socket.Connect(_remoteEndpoint);
+        Log($"IKE transport direct UDP ready; target={_remoteEndpoint}; local={LocalEndpoint}; local-bind={_localAddress?.ToString() ?? "system-route"}.");
     }
+
+    private IPAddress GetBindAddress() => _localAddress
+        ?? (_remoteIp.AddressFamily == AddressFamily.InterNetwork ? IPAddress.Any : IPAddress.IPv6Any);
 
     /// <summary>
     /// Floats the transport to UDP port 4500 for NAT-Traversal (RFC 7296 §2.23 / RFC 3948).
@@ -167,8 +187,9 @@ public sealed class IkeTransport : IDisposable
 
         var recvBuffer = new byte[65535];
 
-        foreach (var interval in backoffs)
+        for (var attempt = 0; attempt < backoffs.Length; attempt++)
         {
+            var interval = backoffs[attempt];
             token.ThrowIfCancellationRequested();
 
             if (_socket == null)
@@ -177,6 +198,8 @@ public sealed class IkeTransport : IDisposable
             var sendBuf = _socks5Client != null
                 ? Socks5Client.EncapsulateUdpDatagram(wirePacket, _remoteEndpoint)
                 : wirePacket;
+            Log($"IKE UDP TX; exchange={expectedExchange}; message-id={expectedMessageId}; attempt={attempt + 1}/{backoffs.Length}; " +
+                $"target={_remoteEndpoint}; relay={_socks5RelayEndpoint?.ToString() ?? "direct"}; ike-bytes={wirePacket.Length}; udp-bytes={sendBuf.Length}.");
             await _socket.SendAsync(sendBuf, SocketFlags.None, token).ConfigureAwait(false);
 
             var attemptDeadline = DateTime.UtcNow + interval;
@@ -198,7 +221,10 @@ public sealed class IkeTransport : IDisposable
                     {
                         var dec = Socks5Client.DecapsulateUdpDatagram(recvBuffer.AsMemory(0, received));
                         if (dec == null || dec.Value.Length < IkeDefaults.HeaderLength)
+                        {
+                            Log($"IKE UDP RX ignored; relay={_socks5RelayEndpoint}; udp-bytes={received}; reason=invalid SOCKS5 UDP datagram or short IKE payload.");
                             continue;
+                        }
                         respSpan = dec.Value.Span;
                     }
                     else
@@ -207,6 +233,8 @@ public sealed class IkeTransport : IDisposable
                             continue;
                         respSpan = recvBuffer.AsSpan(0, received);
                     }
+
+                    Log($"IKE UDP RX; exchange={expectedExchange}; expected-message-id={expectedMessageId}; udp-bytes={received}; ike-bytes={respSpan.Length}; relay={_socks5RelayEndpoint?.ToString() ?? "direct"}.");
 
                     if (_isFloated)
                     {
@@ -232,10 +260,12 @@ public sealed class IkeTransport : IDisposable
                     {
                         return respSpan.ToArray();
                     }
+                    Log($"IKE UDP RX ignored; expected={expectedExchange}/{expectedMessageId}; actual={exchange}/{msgId}; flags={flags}.");
                 }
                 catch (OperationCanceledException) when (readCts.IsCancellationRequested && !token.IsCancellationRequested)
                 {
                     // Timeout on this read attempt, retry or retransmit
+                    Log($"IKE UDP RX timeout; exchange={expectedExchange}; message-id={expectedMessageId}; attempt={attempt + 1}/{backoffs.Length}; waited-ms={(int)interval.TotalMilliseconds}; target={_remoteEndpoint}.");
                     break;
                 }
             }
@@ -323,6 +353,11 @@ public sealed class IkeTransport : IDisposable
     private void ThrowIfDisposed()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+    }
+
+    private void Log(string message)
+    {
+        try { _diagnosticLog?.Invoke(message); } catch { }
     }
 
     /// <summary>

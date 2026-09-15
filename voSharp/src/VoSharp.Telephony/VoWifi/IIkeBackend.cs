@@ -34,7 +34,9 @@ public interface IIkeBackend : IDisposable
         string? proxyUrl = null,
         string? imei = null,
         Action<string>? diagnosticLog = null,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        bool forceNatt = false,
+        System.Net.IPAddress? localAddress = null);
 
     Task StopTunnelAsync(CancellationToken ct = default);
 }

@@ -147,23 +147,35 @@ public class EspTunnel : IDisposable
         const int blockSize = 16;
         int minLen = 8 + blockSize + blockSize + _icvLength;
         if (espPacket.Length < minLen)
+        {
+            TraceOpenFailure("truncated", espPacket.Length, 0, 0);
             return null;
+        }
 
         uint spi = BinaryPrimitives.ReadUInt32BigEndian(espPacket.AsSpan(0, 4));
         uint sequence = BinaryPrimitives.ReadUInt32BigEndian(espPacket.AsSpan(4, 4));
         if (spi != _inboundSpi || sequence == 0)
+        {
+            TraceOpenFailure(spi != _inboundSpi ? "unexpected-spi" : "zero-sequence", espPacket.Length, spi, sequence);
             return null;
+        }
 
         lock (_lock)
         {
             if (!IsSequenceAcceptable(sequence))
+            {
+                TraceOpenFailure("replay-window", espPacket.Length, spi, sequence);
                 return null;
+            }
         }
 
         int authLen = espPacket.Length - _icvLength;
         int cipherLen = authLen - (8 + blockSize);
         if (cipherLen <= 0 || cipherLen % blockSize != 0)
+        {
+            TraceOpenFailure("invalid-ciphertext-length", espPacket.Length, spi, sequence);
             return null;
+        }
 
         var receivedIcv = espPacket.AsSpan(authLen, _icvLength);
         byte[]? calculatedIcv = null;
@@ -187,7 +199,10 @@ public class EspTunnel : IDisposable
 
             calculatedIcv = fullHash.AsSpan(0, _icvLength).ToArray();
             if (!CryptographicOperations.FixedTimeEquals(receivedIcv, calculatedIcv))
+            {
+                TraceOpenFailure("integrity-check", espPacket.Length, spi, sequence);
                 return null;
+            }
 
             iv = espPacket.AsSpan(8, blockSize).ToArray();
             ciphertext = espPacket.AsSpan(8 + blockSize, cipherLen).ToArray();
@@ -203,22 +218,32 @@ public class EspTunnel : IDisposable
             }
 
             if (decrypted.Length < 2)
+            {
+                TraceOpenFailure("decrypted-truncated", espPacket.Length, spi, sequence);
                 return null;
+            }
 
             int padLen = decrypted[^2];
             int innerLen = decrypted.Length - 2 - padLen;
             if (padLen > decrypted.Length - 2 || innerLen <= 0)
+            {
+                TraceOpenFailure("invalid-padding-length", espPacket.Length, spi, sequence);
                 return null;
+            }
 
             for (int i = 0; i < padLen; i++)
             {
                 if (decrypted[innerLen + i] != (byte)(i + 1))
+                {
+                    TraceOpenFailure("invalid-padding-bytes", espPacket.Length, spi, sequence);
                     return null;
+                }
             }
 
             nextHeader = decrypted[^1];
             if (nextHeader is not 4 and not 41)
             {
+                TraceOpenFailure($"unsupported-next-header-{nextHeader}", espPacket.Length, spi, sequence);
                 nextHeader = 0;
                 return null;
             }
@@ -226,7 +251,10 @@ public class EspTunnel : IDisposable
             lock (_lock)
             {
                 if (!IsSequenceAcceptable(sequence))
+                {
+                    TraceOpenFailure("replay-window-race", espPacket.Length, spi, sequence);
                     return null;
+                }
                 CommitSequence(sequence);
             }
 
@@ -234,6 +262,7 @@ public class EspTunnel : IDisposable
         }
         catch (CryptographicException)
         {
+            TraceOpenFailure("cipher-operation", espPacket.Length, spi, sequence);
             return null;
         }
         finally
@@ -249,6 +278,12 @@ public class EspTunnel : IDisposable
         {
             Monitor.Exit(_lock);
         }
+    }
+
+    private void TraceOpenFailure(string reason, int packetLength, uint spi, uint sequence)
+    {
+        // Keep the trace actionable without recording ESP ciphertext, ICVs or key material.
+        Console.WriteLine($"[ESP RX] rejected; reason={reason}; bytes={packetLength}; spi=0x{spi:x8}; sequence={sequence}.");
     }
 
     private bool IsSequenceAcceptable(uint sequence)
