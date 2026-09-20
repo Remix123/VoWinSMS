@@ -31,6 +31,7 @@ namespace VoWin.Views.Pages
         {
             DisableAncestorScrollViewers();
             HookLogAutoScroll();
+            Dispatcher.BeginInvoke(new Action(() => PageScrollViewer.ScrollToTop()), DispatcherPriority.Loaded);
         }
 
         private void OnPageUnloaded(object sender, RoutedEventArgs e)

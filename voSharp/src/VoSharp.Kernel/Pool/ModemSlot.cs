@@ -122,7 +122,13 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
     public SlotState State
     {
         get => _state;
-        private set { if (_state != value) { _state = value; OnPropertyChanged(); } }
+        private set
+        {
+            if (_state == value) return;
+            _state = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(StatusDisplay));
+        }
     }
 
     private string? _proxyUrl;
@@ -236,6 +242,7 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(CarrierName));
                 OnPropertyChanged(nameof(DisplayTitle));
+                OnPropertyChanged(nameof(PhoneNumberDisplay));
             }
         }
     }
@@ -328,6 +335,31 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
         }
     }
 
+    public string StatusDisplay => IsFlightMode ? "飞行模式" : State switch
+    {
+        SlotState.Online => "在线",
+        SlotState.Busy => "忙碌",
+        SlotState.Error => "异常",
+        _ => "离线"
+    };
+
+    public string PhoneNumberDisplay =>
+        !string.IsNullOrWhiteSpace(Sim?.PhoneNumber) ? Sim.PhoneNumber : "未提供";
+
+    public string SignalStrengthDisplay
+    {
+        get
+        {
+            if (IsFlightMode) return "射频关闭";
+            var signal = Signal;
+            if (signal == null || signal.RssiRaw == 99 || signal.RssiDbm is 0 or 99)
+                return "无信号";
+
+            var dbm = signal.RssiDbm > 0 ? -signal.RssiDbm : signal.RssiDbm;
+            return $"{dbm} dBm · {signal.Bars}/5格";
+        }
+    }
+
     public IAkaProvider Aka { get; private set; } = SoftwareAkaProvider.FromTestVectors();
     public VoWifiManager VoWifi { get; }
     public ImsCallManager Calls { get; }
@@ -342,7 +374,13 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
     public SignalQuality? Signal
     {
         get => _signal;
-        private set { if (_signal != value) { _signal = value; OnPropertyChanged(); } }
+        private set
+        {
+            if (_signal == value) return;
+            _signal = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(SignalStrengthDisplay));
+        }
     }
 
     private NetworkRegistration? _registration;
@@ -380,7 +418,14 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
     public bool IsFlightMode
     {
         get => _isFlightMode;
-        set { if (_isFlightMode != value) { _isFlightMode = value; OnPropertyChanged(); } }
+        set
+        {
+            if (_isFlightMode == value) return;
+            _isFlightMode = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(StatusDisplay));
+            OnPropertyChanged(nameof(SignalStrengthDisplay));
+        }
     }
 
     public VoWifiDiagnosticInfo? VoWifiDiag

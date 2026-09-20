@@ -215,8 +215,18 @@ namespace VoWin.ViewModels.Pages
                 StatusMessage = enabled
                     ? $"正在将卡槽 [{slot.Name}] 切换为飞行模式..."
                     : $"正在将卡槽 [{slot.Name}] 退出飞行模式...";
-                await slot.SetFlightModeAsync(enabled);
+                var applied = await slot.SetFlightModeAsync(enabled);
                 token.ThrowIfCancellationRequested();
+                if (!applied || slot.IsFlightMode != enabled)
+                {
+                    _isLoadingPreferences = true;
+                    ModuleFlightMode = slot.IsFlightMode;
+                    _isLoadingPreferences = false;
+                    StatusMessage = "飞行模式切换未获模组确认，开关已恢复为实际状态。";
+                    return;
+                }
+
+                await PersistCurrentSimSwitchesAsync(slot);
                 StatusMessage = enabled
                     ? $"[{slot.Name}] 已进入飞行模式。"
                     : $"[{slot.Name}] 已退出飞行模式并刷新网络。";
@@ -320,7 +330,21 @@ namespace VoWin.ViewModels.Pages
                     }
                 }), System.Windows.Threading.DispatcherPriority.DataBind);
             };
-            _kernelService.Kernel.FlightModeChanged += (s, e) => RefreshSummaryProperties();
+            _kernelService.Kernel.FlightModeChanged += (s, e) =>
+            {
+                RefreshSummaryProperties();
+                App.Current?.Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    var slot = Slots.FirstOrDefault(candidate =>
+                        string.IsNullOrWhiteSpace(e.SlotId) ||
+                        string.Equals(candidate.Id, e.SlotId, StringComparison.OrdinalIgnoreCase));
+                    if (slot == null || !ReferenceEquals(SelectedSlot, slot)) return;
+
+                    _isLoadingPreferences = true;
+                    ModuleFlightMode = slot.IsFlightMode;
+                    _isLoadingPreferences = false;
+                }), System.Windows.Threading.DispatcherPriority.DataBind);
+            };
         }
 
         [RelayCommand]
@@ -538,64 +562,63 @@ namespace VoWin.ViewModels.Pages
 
                 var modPref = await _kernelService.Preferences.GetModulePreferenceAsync(slot.Id, slot.Imei);
                 if (loadVersion != Volatile.Read(ref _preferenceLoadVersion)) return;
-                if (modPref != null)
-                {
-                    ModuleName = string.IsNullOrWhiteSpace(modPref.CustomName) ? slot.Name : modPref.CustomName;
-                    ModuleFlightMode = modPref.DefaultFlightMode;
-                    ModuleVoWifi = modPref.DefaultVoWifi;
-                    ModuleCellularData = modPref.DefaultCellularData;
-                    ModuleDataRoaming = modPref.DefaultDataRoaming;
-                    ModuleProxyUrl = modPref.DefaultProxyUrl ?? string.Empty;
-                    if (!string.IsNullOrWhiteSpace(modPref.CustomName))
-                    {
-                        slot.Name = modPref.CustomName.Trim();
-                    }
-                }
-                else
-                {
-                    ModuleName = slot.Name;
-                    ModuleFlightMode = slot.IsFlightMode;
-                    ModuleVoWifi = false;
-                    ModuleCellularData = false;
-                    ModuleDataRoaming = false;
-                    ModuleProxyUrl = slot.ProxyUrl ?? string.Empty;
-                }
 
+                SimPreferenceModel? simPref = null;
                 if (slot.Sim != null && !string.IsNullOrEmpty(slot.Sim.Iccid))
                 {
-                    var simPref = await _kernelService.Preferences.GetSimPreferenceAsync(slot.Sim.Iccid);
+                    simPref = await _kernelService.Preferences.GetSimPreferenceAsync(slot.Sim.Iccid);
                     if (loadVersion != Volatile.Read(ref _preferenceLoadVersion)) return;
-                    if (simPref != null)
+                }
+
+                ModuleName = string.IsNullOrWhiteSpace(modPref?.CustomName) ? slot.Name : modPref.CustomName;
+                ModuleProxyUrl = modPref?.DefaultProxyUrl ?? slot.ProxyUrl ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(modPref?.CustomName))
+                {
+                    slot.Name = modPref.CustomName.Trim();
+                }
+
+                var desiredFlightMode = !slot.IsPcscReader &&
+                    (simPref?.DefaultFlightMode ?? modPref?.DefaultFlightMode ?? slot.IsFlightMode);
+                if (!slot.IsPcscReader && slot.IsFlightMode != desiredFlightMode)
+                {
+                    try
                     {
-                        SimCardNickname = simPref.CardNickname ?? string.Empty;
-                        SimFlightMode = simPref.DefaultFlightMode;
-                        SimVoWifi = simPref.DefaultVoWifi;
-                        SimCellularData = simPref.DefaultCellularData;
-                        SimDataRoaming = simPref.DefaultDataRoaming;
-                        SimProxyUrl = simPref.DedicatedProxyUrl ?? string.Empty;
-                        slot.CardNickname = simPref.CardNickname;
+                        await slot.SetFlightModeAsync(desiredFlightMode);
                     }
-                    else
+                    catch (Exception ex)
                     {
-                        SimCardNickname = string.Empty;
-                        SimFlightMode = false;
-                        SimVoWifi = false;
-                        SimCellularData = false;
-                        SimDataRoaming = false;
-                        SimProxyUrl = string.Empty;
-                        slot.CardNickname = null;
+                        PreferenceStatusMessage = $"恢复飞行模式失败: {ex.Message}";
                     }
+                }
+
+                // The hardware value is authoritative. The SIM-scoped policy is
+                // used as the desired value only until the modem confirms it.
+                ModuleFlightMode = slot.IsPcscReader ? false : slot.IsFlightMode;
+                ModuleVoWifi = simPref?.DefaultVoWifi ?? modPref?.DefaultVoWifi ?? false;
+                ModuleCellularData = simPref?.DefaultCellularData ?? modPref?.DefaultCellularData ?? false;
+                ModuleDataRoaming = simPref?.DefaultDataRoaming ?? modPref?.DefaultDataRoaming ?? false;
+
+                if (simPref != null)
+                {
+                    SimCardNickname = simPref.CardNickname ?? string.Empty;
+                    SimFlightMode = simPref.DefaultFlightMode;
+                    SimVoWifi = simPref.DefaultVoWifi;
+                    SimCellularData = simPref.DefaultCellularData;
+                    SimDataRoaming = simPref.DefaultDataRoaming;
+                    SimProxyUrl = simPref.DedicatedProxyUrl ?? string.Empty;
+                    slot.CardNickname = simPref.CardNickname;
                 }
                 else
                 {
                     SimCardNickname = string.Empty;
-                    SimFlightMode = false;
-                    SimVoWifi = false;
-                    SimCellularData = false;
-                    SimDataRoaming = false;
+                    SimFlightMode = ModuleFlightMode;
+                    SimVoWifi = ModuleVoWifi;
+                    SimCellularData = ModuleCellularData;
+                    SimDataRoaming = ModuleDataRoaming;
                     SimProxyUrl = string.Empty;
                     slot.CardNickname = null;
                 }
+
                 PreferenceStatusMessage = $"已同步 [{slot.Name}] 的 SQLite 偏好。";
             }
             catch (Exception ex)
@@ -626,6 +649,20 @@ namespace VoWin.ViewModels.Pages
                     string.IsNullOrWhiteSpace(ModuleProxyUrl) ? null : ModuleProxyUrl.Trim(),
                     string.IsNullOrWhiteSpace(ModuleName) ? null : ModuleName.Trim()
                 );
+                var iccid = SelectedSlot.Sim?.Iccid;
+                if (!string.IsNullOrWhiteSpace(iccid))
+                {
+                    var existing = await _kernelService.Preferences.GetSimPreferenceAsync(iccid);
+                    await _kernelService.SaveSimPreferencesAsync(
+                        iccid,
+                        SelectedSlot.IsFlightMode,
+                        ModuleVoWifi,
+                        ModuleCellularData,
+                        ModuleDataRoaming,
+                        existing?.DedicatedProxyUrl,
+                        existing?.CardNickname);
+                }
+
                 PreferenceStatusMessage = $"模块 [{SelectedSlot.Name}] 偏好已持久化至 SQLite。";
                 StatusMessage = PreferenceStatusMessage;
             }
@@ -634,6 +671,22 @@ namespace VoWin.ViewModels.Pages
                 PreferenceStatusMessage = $"保存模块偏好失败: {ex.Message}";
                 StatusMessage = PreferenceStatusMessage;
             }
+        }
+
+        private async Task PersistCurrentSimSwitchesAsync(ModemSlot slot)
+        {
+            var iccid = slot.Sim?.Iccid;
+            if (string.IsNullOrWhiteSpace(iccid)) return;
+
+            var existing = await _kernelService.Preferences.GetSimPreferenceAsync(iccid);
+            await _kernelService.SaveSimPreferencesAsync(
+                iccid,
+                slot.IsFlightMode,
+                ModuleVoWifi,
+                ModuleCellularData,
+                ModuleDataRoaming,
+                existing?.DedicatedProxyUrl,
+                existing?.CardNickname);
         }
 
         [RelayCommand]

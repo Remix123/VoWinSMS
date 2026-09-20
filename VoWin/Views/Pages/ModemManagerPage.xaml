@@ -297,13 +297,13 @@
                   <!-- Line 2: SIM card alias -->
                   <TextBlock Grid.Row="1" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource AppAccentBrush}" Margin="16,3,0,0" Text="{Binding CardNickname, Mode=OneWay}" TextTrimming="CharacterEllipsis" Visibility="{Binding CardNickname, Converter={StaticResource NullToVis}}" />
 
-                  <!-- Line 3: Operator / RAT / SIM Status -->
+                  <!-- Line 3: Operator / RAT / Own Number -->
                   <TextBlock Grid.Row="2" FontSize="11" Foreground="{DynamicResource AppTextSecondaryBrush}" Margin="16,3,0,0" TextTrimming="CharacterEllipsis">
                     <Run Text="{Binding CarrierName, Mode=OneWay, FallbackValue='未识别运营商'}" />
                     <Run Text=" · " />
                     <Run Text="{Binding Signal.Rat, Mode=OneWay, FallbackValue='LTE/NR'}" />
-                    <Run Text=" · " />
-                    <Run Text="{Binding Sim.Imsi, Mode=OneWay, FallbackValue='SIM 就绪'}" />
+                    <Run Text=" · 本机号: " />
+                    <Run Text="{Binding PhoneNumberDisplay, Mode=OneWay, FallbackValue='未提供'}" />
                   </TextBlock>
 
                   <!-- Line 4: VoWiFi State Summary -->
@@ -386,7 +386,7 @@
                     <Border Margin="0,0,6,0" Padding="7,2" Background="{DynamicResource AppCardBrush}" CornerRadius="6" VerticalAlignment="Center">
                       <StackPanel Orientation="Horizontal">
                         <Ellipse Width="7" Height="7" Fill="{Binding SelectedSlot.State, Converter={StaticResource SlotStateColor}}" Margin="0,0,5,0" VerticalAlignment="Center" />
-                        <TextBlock FontSize="11" FontWeight="SemiBold" Text="{Binding SelectedSlot.State, Converter={StaticResource SlotStateText}, Mode=OneWay}" VerticalAlignment="Center" />
+                        <TextBlock FontSize="11" FontWeight="SemiBold" Text="{Binding SelectedSlot.StatusDisplay, Mode=OneWay}" VerticalAlignment="Center" />
                       </StackPanel>
                     </Border>
 
@@ -476,33 +476,17 @@
                     <Run FontWeight="SemiBold" Text="{Binding SelectedSlotOperatorDisplay, Mode=OneWay}" />
                   </TextBlock>
 
-                  <!-- IMEI with Copy -->
+                  <!-- Own phone number with Copy -->
                   <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,14,0">
-                    <TextBlock FontSize="12" Foreground="{DynamicResource AppTextTertiaryBrush}" Text="IMEI: " VerticalAlignment="Center" />
-                    <TextBlock FontSize="12" FontFamily="{DynamicResource AppFontFamily}" FontWeight="Medium" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="{Binding SelectedSlot.Imei, Mode=OneWay, FallbackValue='--'}" VerticalAlignment="Center" />
+                    <TextBlock FontSize="12" Foreground="{DynamicResource AppTextTertiaryBrush}" Text="本机号码: " VerticalAlignment="Center" />
+                    <TextBlock FontSize="12" FontFamily="{DynamicResource AppFontFamily}" FontWeight="Medium" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="{Binding SelectedSlot.PhoneNumberDisplay, Mode=OneWay, FallbackValue='未提供'}" VerticalAlignment="Center" />
                     <ui:Button
                       Appearance="Transparent"
                       Padding="4,2"
                       Margin="2,0,0,0"
                       Command="{Binding CopyToClipboardCommand}"
-                      CommandParameter="{Binding SelectedSlot.Imei, Mode=OneWay}"
-                      ToolTip="复制 IMEI"
-                    >
-                      <ui:SymbolIcon Symbol="Copy16" FontSize="11" Foreground="{DynamicResource AppTextTertiaryBrush}" />
-                    </ui:Button>
-                  </StackPanel>
-
-                  <!-- IMSI with Copy -->
-                  <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,14,0">
-                    <TextBlock FontSize="12" Foreground="{DynamicResource AppTextTertiaryBrush}" Text="IMSI: " VerticalAlignment="Center" />
-                    <TextBlock FontSize="12" FontFamily="{DynamicResource AppFontFamily}" FontWeight="Medium" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="{Binding SelectedSlot.Sim.Imsi, Mode=OneWay, FallbackValue='--'}" VerticalAlignment="Center" />
-                    <ui:Button
-                      Appearance="Transparent"
-                      Padding="4,2"
-                      Margin="2,0,0,0"
-                      Command="{Binding CopyToClipboardCommand}"
-                      CommandParameter="{Binding SelectedSlot.Sim.Imsi, Mode=OneWay}"
-                      ToolTip="复制 IMSI"
+                      CommandParameter="{Binding SelectedSlot.Sim.PhoneNumber, Mode=OneWay}"
+                      ToolTip="复制本机号码"
                     >
                       <ui:SymbolIcon Symbol="Copy16" FontSize="11" Foreground="{DynamicResource AppTextTertiaryBrush}" />
                     </ui:Button>
@@ -650,7 +634,7 @@
                             <TextBlock FontSize="11" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="通信串口与状态" />
                             <TextBlock FontSize="14" FontFamily="{DynamicResource AppFontFamily}" FontWeight="Bold" Margin="0,4,0,0" Text="{Binding SelectedSlot.PortName, Mode=OneWay}" />
                             <TextBlock FontSize="11" Foreground="{DynamicResource AppTextTertiaryBrush}" Margin="0,2,0,0">
-                              <Run Text="{Binding SelectedSlot.BaudRate, Mode=OneWay}" /><Run Text=" bps · " /><Run Text="{Binding SelectedSlot.State, Converter={StaticResource SlotStateText}, Mode=OneWay}" />
+                              <Run Text="{Binding SelectedSlot.BaudRate, Mode=OneWay}" /><Run Text=" bps · " /><Run Text="{Binding SelectedSlot.StatusDisplay, Mode=OneWay}" />
                             </TextBlock>
                           </StackPanel>
                         </Grid>
