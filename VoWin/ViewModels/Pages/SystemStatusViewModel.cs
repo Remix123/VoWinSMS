@@ -293,10 +293,10 @@ namespace VoWin.ViewModels.Pages
 
         public string SlotStateText => SelectedSlot?.State switch
         {
-            SlotState.Online => "在线 (Online)",
-            SlotState.Busy => "忙碌 (Busy)",
-            SlotState.Error => "异常 (Error)",
-            _ => "就绪 (Standby)"
+            SlotState.Online => "在线",
+            SlotState.Busy => "忙碌",
+            SlotState.Error => "异常",
+            _ => "离线"
         };
 
         public string SimCardStatusText => !string.IsNullOrWhiteSpace(CurrentSim?.Imsi) ? "SIM 卡就绪" : "未插卡";

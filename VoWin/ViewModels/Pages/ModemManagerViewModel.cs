@@ -1363,7 +1363,7 @@ namespace VoWin.ViewModels.Pages
             _ => TokenMutedBg
         };
 
-        public string SelectedSlotSimStatusText => !string.IsNullOrEmpty(SelectedSlot?.Sim?.Imsi) ? "SIM Ready" : "未插卡";
+        public string SelectedSlotSimStatusText => !string.IsNullOrEmpty(SelectedSlot?.Sim?.Imsi) ? "SIM 就绪" : "未插卡";
         public Brush SelectedSlotSimBrush => !string.IsNullOrEmpty(SelectedSlot?.Sim?.Imsi) ? TokenSuccess : TokenMuted;
         public Brush SelectedSlotSimBg => !string.IsNullOrEmpty(SelectedSlot?.Sim?.Imsi) ? TokenSuccessBg : TokenMutedBg;
 

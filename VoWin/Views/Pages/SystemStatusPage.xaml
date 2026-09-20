@@ -21,6 +21,7 @@
   <Page.Resources>
     <helpers:BoolToVisibilityConverter x:Key="BoolToVis" />
     <helpers:SlotStateToColorConverter x:Key="SlotStateColor" />
+    <helpers:SlotStateToTextConverter x:Key="SlotStateText" />
     <Style x:Key="LogFilterButtonStyle" TargetType="ui:Button" BasedOn="{StaticResource {x:Type ui:Button}}">
       <Setter Property="Padding" Value="7,3" />
       <Setter Property="Margin" Value="0,0,4,0" />
@@ -75,7 +76,7 @@
                         <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                         <Ellipse Width="8" Height="8" Fill="{Binding State, Converter={StaticResource SlotStateColor}}" Margin="0,0,8,0" VerticalAlignment="Center" />
                         <StackPanel Grid.Column="1"><TextBlock FontWeight="SemiBold" Text="{Binding Name, Mode=OneWay}" TextTrimming="CharacterEllipsis" /><TextBlock FontSize="11" Foreground="{DynamicResource AppTextTertiaryBrush}" Text="{Binding PortName, Mode=OneWay}" /></StackPanel>
-                        <Border Grid.Column="2" Padding="5,2" Background="{DynamicResource AppSuccessSoftBrush}" CornerRadius="5"><TextBlock FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource AppSuccessBrush}" Text="{Binding State, Mode=OneWay}" /></Border>
+                        <Border Grid.Column="2" Padding="5,1" VerticalAlignment="Top" Background="{DynamicResource AppSuccessSoftBrush}" CornerRadius="5"><TextBlock FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource AppSuccessBrush}" Text="{Binding State, Converter={StaticResource SlotStateText}, Mode=OneWay}" /></Border>
                       </Grid>
                       <TextBlock Grid.Row="1" Margin="16,14,0,0" FontSize="14" FontWeight="SemiBold" Text="{Binding CarrierName, Mode=OneWay, FallbackValue='未知运营商'}" TextTrimming="CharacterEllipsis" />
                       <StackPanel Grid.Row="2" Margin="16,4,0,0">
@@ -103,12 +104,14 @@
             </Grid>
             <Grid>
               <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-              <StackPanel Grid.Column="0" Margin="0,0,8,0"><TextBlock FontSize="11" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="IMS 注册状态" /><TextBlock FontSize="15" FontWeight="SemiBold" Margin="0,4,0,0" Text="{Binding VoWifiDiag.Ims.RegistrationState, Mode=OneWay, FallbackValue='未注册 (Offline)'}" TextTrimming="CharacterEllipsis" /><TextBlock FontSize="11" Foreground="{DynamicResource AppTextTertiaryBrush}" Margin="0,2,0,0" Text="SIP 核心网响应" /></StackPanel>
+              <StackPanel Grid.Column="0" Margin="0,0,8,0"><TextBlock FontSize="11" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="IMS 注册状态" /><TextBlock FontSize="15" FontWeight="SemiBold" Margin="0,4,0,0" Text="{Binding VoWifiDiag.Ims.RegistrationState, Mode=OneWay, FallbackValue='未注册'}" TextTrimming="CharacterEllipsis" /><TextBlock FontSize="11" Foreground="{DynamicResource AppTextTertiaryBrush}" Margin="0,2,0,0" Text="SIP 核心网响应" /></StackPanel>
               <StackPanel Grid.Column="1" Margin="4,0,8,0"><TextBlock FontSize="11" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="往返延迟 (RTT)" /><TextBlock FontSize="15" FontWeight="SemiBold" Margin="0,4,0,0" Text="{Binding SipProbeRtt, Mode=OneWay}" /><TextBlock FontSize="11" Foreground="{DynamicResource AppTextTertiaryBrush}" Margin="0,2,0,0" Text="{Binding LastProbeStatusText, Mode=OneWay}" /></StackPanel>
               <StackPanel Grid.Column="2" Margin="4,0,8,0"><TextBlock FontSize="11" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="保活统计" /><TextBlock FontSize="15" FontWeight="SemiBold" Margin="0,4,0,0" Text="{Binding SipProbeCountText, Mode=OneWay}" TextTrimming="CharacterEllipsis" /><TextBlock FontSize="11" Foreground="{DynamicResource AppTextTertiaryBrush}" Margin="0,2,0,0" Text="{Binding LastHeartbeatRelativeText, Mode=OneWay}" /></StackPanel>
               <StackPanel Grid.Column="3" Margin="4,0,0,0"><TextBlock FontSize="11" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="NAT 映射与端点" /><TextBlock FontSize="12" FontWeight="SemiBold" Margin="0,4,0,0" Text="{Binding NatBindingText, Mode=OneWay}" TextTrimming="CharacterEllipsis" /><TextBlock FontSize="11" Foreground="{DynamicResource AppTextTertiaryBrush}" Margin="0,2,0,0"><Run Text="IP: " /><Run Text="{Binding AssignedIp, Mode=OneWay}" /><Run Text=" · P-CSCF: " /><Run Text="{Binding PcscfIp, Mode=OneWay}" /></TextBlock></StackPanel>
             </Grid>
-            <Border Margin="0,16,0,0" Padding="10,10,8,8" Background="{DynamicResource AppInputBrush}" BorderBrush="{DynamicResource AppCardBorderBrush}" BorderThickness="1" CornerRadius="8" PreviewMouseWheel="OnTerminalPreviewMouseWheel">
+          </StackPanel>
+        </Border>
+            <Border Margin="0,14,0,0" Padding="18,16" Background="{DynamicResource AppCardBrush}" BorderBrush="{DynamicResource AppCardBorderBrush}" BorderThickness="1" CornerRadius="8" PreviewMouseWheel="OnTerminalPreviewMouseWheel">
               <Grid>
                 <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="260" /></Grid.RowDefinitions>
                 <Grid Grid.Row="0" Margin="0,0,0,8">
@@ -134,8 +137,6 @@
                 </ListBox>
               </Grid>
             </Border>
-          </StackPanel>
-        </Border>
       </StackPanel>
     </ScrollViewer>
   </Grid>

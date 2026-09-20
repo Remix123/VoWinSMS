@@ -206,6 +206,11 @@
       MenuItemsSource="{Binding ViewModel.MenuItems, Mode=OneWay}"
       PaneDisplayMode="LeftFluent"
       Background="{DynamicResource AppNavigationBrush}"
+      FontFamily="Microsoft YaHei UI"
+      TextElement.FontFamily="Microsoft YaHei UI"
+      TextOptions.TextFormattingMode="Display"
+      TextOptions.TextRenderingMode="ClearType"
+      RenderOptions.ClearTypeHint="Enabled"
     >
       <ui:NavigationView.ContentOverlay>
         <Grid>

@@ -254,6 +254,44 @@ namespace VoWin.Helpers
         public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => throw new NotImplementedException();
     }
 
+    public class SlotStateToTextConverter : IValueConverter
+    {
+        public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+        {
+            return value is SlotState state ? state switch
+            {
+                SlotState.Online => "在线",
+                SlotState.Busy => "忙碌",
+                SlotState.Error => "异常",
+                _ => "离线"
+            } : "未知";
+        }
+
+        public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+            => throw new NotImplementedException();
+    }
+
+    public class VoWifiStateToTextConverter : IValueConverter
+    {
+        public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+        {
+            return value is VoWifiState state ? state switch
+            {
+                VoWifiState.ImsRegistered => "IMS 已注册",
+                VoWifiState.ImsRegistering => "IMS 注册中",
+                VoWifiState.IpsecTunnelEstablished => "IPsec 隧道就绪",
+                VoWifiState.ResolvingEpdg => "ePDG 解析中",
+                VoWifiState.ConnectingIkev2 => "IKEv2 连接中",
+                VoWifiState.AuthenticatingEapAka => "EAP-AKA 鉴权中",
+                VoWifiState.Failed => "连接失败",
+                _ => "未连接"
+            } : "未连接";
+        }
+
+        public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+            => throw new NotImplementedException();
+    }
+
     public class SignalBarsToSymbolConverter : IValueConverter
     {
         public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)

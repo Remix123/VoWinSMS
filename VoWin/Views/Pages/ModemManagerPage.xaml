@@ -18,6 +18,8 @@
     <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
     <converters:BoolToVisibilityConverter x:Key="InvertBoolToVis" Invert="True" />
     <converters:SlotStateToColorConverter x:Key="SlotStateColor" />
+    <converters:SlotStateToTextConverter x:Key="SlotStateText" />
+    <converters:VoWifiStateToTextConverter x:Key="VoWifiStateText" />
     <converters:SignalBarsToSymbolConverter x:Key="SignalBarsSymbol" />
     <converters:NullToVisibilityConverter x:Key="NullToVis" />
     <converters:NullToVisibilityConverter x:Key="InvertNullToVis" Invert="True" />
@@ -307,7 +309,7 @@
                   <!-- Line 4: VoWiFi State Summary -->
                   <TextBlock Grid.Row="3" FontSize="10" Foreground="{DynamicResource AppTextTertiaryBrush}" Margin="16,2,0,0" TextTrimming="CharacterEllipsis">
                     <Run Text="VoWiFi: " />
-                    <Run Text="{Binding VoWifi.State, Mode=OneWay, FallbackValue='Disconnected'}" />
+                    <Run Text="{Binding VoWifi.State, Converter={StaticResource VoWifiStateText}, Mode=OneWay, FallbackValue='未连接'}" />
                   </TextBlock>
                 </Grid>
               </DataTemplate>
@@ -384,7 +386,7 @@
                     <Border Margin="0,0,6,0" Padding="7,2" Background="{DynamicResource AppCardBrush}" CornerRadius="6" VerticalAlignment="Center">
                       <StackPanel Orientation="Horizontal">
                         <Ellipse Width="7" Height="7" Fill="{Binding SelectedSlot.State, Converter={StaticResource SlotStateColor}}" Margin="0,0,5,0" VerticalAlignment="Center" />
-                        <TextBlock FontSize="11" FontWeight="SemiBold" Text="{Binding SelectedSlot.State, Mode=OneWay}" VerticalAlignment="Center" />
+                        <TextBlock FontSize="11" FontWeight="SemiBold" Text="{Binding SelectedSlot.State, Converter={StaticResource SlotStateText}, Mode=OneWay}" VerticalAlignment="Center" />
                       </StackPanel>
                     </Border>
 
@@ -648,7 +650,7 @@
                             <TextBlock FontSize="11" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="通信串口与状态" />
                             <TextBlock FontSize="14" FontFamily="{DynamicResource AppFontFamily}" FontWeight="Bold" Margin="0,4,0,0" Text="{Binding SelectedSlot.PortName, Mode=OneWay}" />
                             <TextBlock FontSize="11" Foreground="{DynamicResource AppTextTertiaryBrush}" Margin="0,2,0,0">
-                              <Run Text="{Binding SelectedSlot.BaudRate, Mode=OneWay}" /><Run Text=" bps · " /><Run Text="{Binding SelectedSlot.State, Mode=OneWay}" />
+                              <Run Text="{Binding SelectedSlot.BaudRate, Mode=OneWay}" /><Run Text=" bps · " /><Run Text="{Binding SelectedSlot.State, Converter={StaticResource SlotStateText}, Mode=OneWay}" />
                             </TextBlock>
                           </StackPanel>
                         </Grid>
@@ -745,7 +747,7 @@
                           <!-- 2. IMS Registration -->
                           <StackPanel Grid.Column="1" Margin="4,0,8,0">
                             <TextBlock FontSize="11" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="IMS 注册状态" />
-                            <TextBlock FontSize="14" FontWeight="SemiBold" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" Text="{Binding SelectedSlot.VoWifiDiag.Ims.RegistrationState, Mode=OneWay, FallbackValue='未注册 (Offline)'}" />
+                            <TextBlock FontSize="14" FontWeight="SemiBold" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" Text="{Binding SelectedSlot.VoWifiDiag.Ims.RegistrationState, Mode=OneWay, FallbackValue='未注册'}" />
                             <TextBlock FontSize="11" Foreground="{DynamicResource AppTextTertiaryBrush}" Margin="0,2,0,0" Text="SIP 核心网响应" />
                           </StackPanel>
 
@@ -893,7 +895,7 @@
 
                           <!-- Field 1: IMS Registration State -->
                           <TextBlock Grid.Row="0" Grid.Column="0" Text="IMS 注册状态" Foreground="{DynamicResource AppTextSecondaryBrush}" VerticalAlignment="Center" />
-                          <TextBlock Grid.Row="0" Grid.Column="1" FontWeight="SemiBold" Text="{Binding SelectedSlot.VoWifiDiag.Ims.RegistrationState, Mode=OneWay, FallbackValue='未注册 (Offline)'}" VerticalAlignment="Center" />
+                          <TextBlock Grid.Row="0" Grid.Column="1" FontWeight="SemiBold" Text="{Binding SelectedSlot.VoWifiDiag.Ims.RegistrationState, Mode=OneWay, FallbackValue='未注册'}" VerticalAlignment="Center" />
 
                           <!-- Field 2: Home Domain with Copy -->
                           <TextBlock Grid.Row="2" Grid.Column="0" Text="归属域 (Home Domain)" Foreground="{DynamicResource AppTextSecondaryBrush}" VerticalAlignment="Center" />
