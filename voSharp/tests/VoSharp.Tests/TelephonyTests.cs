@@ -189,7 +189,10 @@ public class TelephonyTests
             "8900000000000000002",
             opName: "PLMN 460-15");
 
-        Assert.Equal("中国广电（China Broadnet）", sim.OperatorName);
+        Assert.Equal("China Broadnet", sim.OperatorName);
+        Assert.Equal("China Mobile", SimOperatorCatalog.Resolve("460", "00"));
+        Assert.Equal("China Unicom", SimOperatorCatalog.Resolve("460", "01"));
+        Assert.Equal("T-Mobile - US", SimOperatorCatalog.Resolve("310", "260"));
     }
 
     [Fact]
