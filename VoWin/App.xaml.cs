@@ -57,6 +57,9 @@ namespace VoWin
                 // SQLite Preferences & Telecom Kernel Service
                 services.AddSingleton<IPreferenceDatabaseService, PreferenceDatabaseService>();
                 services.AddSingleton<IVoKernelService, VoKernelService>();
+                services.AddSingleton<NotificationService>();
+                services.AddSingleton<INotificationService>(sp => sp.GetRequiredService<NotificationService>());
+                services.AddHostedService(sp => sp.GetRequiredService<NotificationService>());
                 services.AddSingleton<VoWin.Services.RemoteControl.RemoteControlService>();
                 services.AddSingleton<IRemoteControlService>(sp => sp.GetRequiredService<VoWin.Services.RemoteControl.RemoteControlService>());
                 services.AddHostedService(sp => sp.GetRequiredService<VoWin.Services.RemoteControl.RemoteControlService>());

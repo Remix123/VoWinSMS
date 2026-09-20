@@ -9,9 +9,17 @@ namespace VoWin.ViewModels.Pages
     {
         private bool _isInitialized = false;
         private bool _callSettingsLoaded;
+        private bool _notificationSettingsLoaded;
         private readonly IVoKernelService _kernel;
+        private readonly INotificationService _notificationService;
 
-        public SettingsViewModel(IVoKernelService kernel) => _kernel = kernel;
+        public SettingsViewModel(IVoKernelService kernel, INotificationService notificationService)
+        {
+            _kernel = kernel;
+            _notificationService = notificationService;
+        }
+
+        public event Action? NotificationSettingsLoaded;
 
         [ObservableProperty]
         private string _appVersion = "VoWin";
@@ -35,6 +43,9 @@ namespace VoWin.ViewModels.Pages
         [ObservableProperty] private string _autoAnswerMessagePath = string.Empty;
         [ObservableProperty] private string _recordingDirectory = string.Empty;
         [ObservableProperty] private string _callSettingsStatus = string.Empty;
+        [ObservableProperty] private NotificationSettings _notifications = new();
+        [ObservableProperty] private string _notificationStatus = string.Empty;
+        [ObservableProperty] private bool _notificationBusy;
 
         public async Task OnNavigatedToAsync()
         {
@@ -50,6 +61,12 @@ namespace VoWin.ViewModels.Pages
                 AutoAnswerMessagePath = settings.AutoAnswerMessagePath ?? string.Empty;
                 RecordingDirectory = settings.RecordingDirectory ?? GetDefaultRecordingDirectory();
                 _callSettingsLoaded = true;
+            }
+            if (!_notificationSettingsLoaded)
+            {
+                Notifications = await _notificationService.GetSettingsAsync();
+                _notificationSettingsLoaded = true;
+                NotificationSettingsLoaded?.Invoke();
             }
         }
 
@@ -153,6 +170,42 @@ namespace VoWin.ViewModels.Pages
                 AutoAnswerMessagePath = path
             });
             CallSettingsStatus = "通话与来电设置已保存。";
+        }
+
+        [RelayCommand]
+        private async Task SaveNotificationsAsync()
+        {
+            if (NotificationBusy) return;
+            NotificationBusy = true;
+            try
+            {
+                await _notificationService.SaveSettingsAsync(Notifications);
+                NotificationStatus = "通知设置已安全保存。新短信和来电会按已启用渠道推送。";
+            }
+            catch (Exception ex)
+            {
+                NotificationStatus = $"通知设置保存失败：{ex.Message}";
+            }
+            finally
+            {
+                NotificationBusy = false;
+            }
+        }
+
+        [RelayCommand]
+        private async Task TestNotificationAsync(string channel)
+        {
+            if (NotificationBusy) return;
+            NotificationBusy = true;
+            try
+            {
+                var result = await _notificationService.SendTestAsync(channel, Notifications);
+                NotificationStatus = result.Message;
+            }
+            finally
+            {
+                NotificationBusy = false;
+            }
         }
 
         private static string GetDefaultRecordingDirectory() => Path.Combine(

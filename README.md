@@ -92,6 +92,8 @@ ICCID 与 IMSI 的国家不同并不一定是识别错误，旅行卡、多 IMSI
 | 管理 eSIM | **Modem 管理** | 读取 EID/Profile，扫描或粘贴 `LPA:1` 激活码并管理 Profile |
 | 手机远程控制 | **远程控制** | 配置微信 iLink 或 QQ 官方 Bot，并授权允许操作的账号 |
 
+在 **设置 → 外部通知** 中还可以配置 Telegram Bot、Bark、Pushplus、通用 Webhook、企业微信机器人和飞书/Lark 机器人。通知渠道只发送单向事件，不会获得设备控制权限；短信和来电通知可分别关闭，也可以只推送含验证码的短信。配置使用 Windows 当前用户 DPAPI 加密保存在本机，URL 支持每行填写一个目标地址，并可分别发送测试通知。
+
 ### 第三步：连接 VoWiFi
 
 1. 确认 SIM 已由运营商开通 VoWiFi / IMS，且当前网络允许连接其 ePDG。

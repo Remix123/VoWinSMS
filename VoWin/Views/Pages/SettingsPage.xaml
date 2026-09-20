@@ -203,6 +203,127 @@
             <TextBlock Margin="0,10,0,0" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="{Binding ViewModel.CallSettingsStatus}" />
           </StackPanel>
         </Border>
+
+        <!-- External notifications -->
+        <Border Margin="0,0,0,16" Padding="16,14" Background="{DynamicResource AppCardBrush}" BorderBrush="{DynamicResource AppCardBorderBrush}" BorderThickness="1" CornerRadius="12">
+          <StackPanel>
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <StackPanel>
+                <TextBlock FontSize="18" FontWeight="SemiBold" Text="外部通知" />
+                <TextBlock Margin="0,4,0,0" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="参考 VoCat，收到短信或来电时推送到 Telegram、Bark、Webhook、企业微信和飞书。" TextWrapping="Wrap" />
+              </StackPanel>
+              <ui:Button Grid.Column="1" Margin="16,0,0,0" VerticalAlignment="Center" Appearance="Primary" Content="保存通知设置" Command="{Binding ViewModel.SaveNotificationsCommand}" />
+            </Grid>
+
+            <Border Margin="0,16,0,14" Padding="12,10" Background="{DynamicResource AppInfoSoftBrush}" BorderBrush="{DynamicResource AppInfoBrush}" BorderThickness="1" CornerRadius="8">
+              <StackPanel>
+                <ui:ToggleSwitch IsChecked="{Binding ViewModel.Notifications.NotifyIncomingSms}" Content="推送收到的短信" />
+                <ui:ToggleSwitch Margin="0,8,0,0" IsChecked="{Binding ViewModel.Notifications.NotifyOtpOnly}" Content="只推送含验证码的短信" />
+                <ui:ToggleSwitch Margin="0,8,0,0" IsChecked="{Binding ViewModel.Notifications.NotifyIncomingCalls}" Content="推送来电提醒" />
+              </StackPanel>
+            </Border>
+
+            <Grid>
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+              </Grid.RowDefinitions>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="16" />
+                <ColumnDefinition Width="*" />
+              </Grid.ColumnDefinitions>
+
+              <Border Grid.Column="0" Padding="14" Background="{DynamicResource AppInputBrush}" BorderBrush="{DynamicResource AppDividerBrush}" BorderThickness="1" CornerRadius="10">
+                <StackPanel>
+                  <DockPanel>
+                    <ui:Button DockPanel.Dock="Right" Content="测试" Command="{Binding ViewModel.TestNotificationCommand}" CommandParameter="telegram" />
+                    <ui:ToggleSwitch IsChecked="{Binding ViewModel.Notifications.Telegram.Enabled}" Content="Telegram Bot" />
+                  </DockPanel>
+                  <TextBlock Margin="0,12,0,5" Text="Bot Token" />
+                  <PasswordBox x:Name="TelegramTokenBox" PasswordChanged="OnTelegramTokenChanged" />
+                  <TextBlock Margin="0,10,0,5" Text="Chat ID" />
+                  <TextBox Text="{Binding ViewModel.Notifications.Telegram.ChatId, UpdateSourceTrigger=PropertyChanged}" />
+                  <TextBlock Margin="0,10,0,5" Text="API 地址（可选反代）" />
+                  <TextBox Text="{Binding ViewModel.Notifications.Telegram.ApiBaseUrl, UpdateSourceTrigger=PropertyChanged}" />
+                </StackPanel>
+              </Border>
+
+              <Border Grid.Column="2" Padding="14" Background="{DynamicResource AppInputBrush}" BorderBrush="{DynamicResource AppDividerBrush}" BorderThickness="1" CornerRadius="10">
+                <StackPanel>
+                  <DockPanel>
+                    <ui:Button DockPanel.Dock="Right" Content="测试" Command="{Binding ViewModel.TestNotificationCommand}" CommandParameter="bark" />
+                    <ui:ToggleSwitch IsChecked="{Binding ViewModel.Notifications.Bark.Enabled}" Content="Bark" />
+                  </DockPanel>
+                  <TextBlock Margin="0,12,0,5" Text="推送 URL（每行一个）" />
+                  <TextBox MinHeight="58" AcceptsReturn="True" TextWrapping="Wrap" Text="{Binding ViewModel.Notifications.Bark.Urls, UpdateSourceTrigger=PropertyChanged}" />
+                  <TextBlock Margin="0,10,0,5" Text="分组（可选）" />
+                  <TextBox Text="{Binding ViewModel.Notifications.Bark.Group, UpdateSourceTrigger=PropertyChanged}" />
+                </StackPanel>
+              </Border>
+
+              <Border Grid.Row="1" Grid.Column="0" Margin="0,16,0,0" Padding="14" Background="{DynamicResource AppInputBrush}" BorderBrush="{DynamicResource AppDividerBrush}" BorderThickness="1" CornerRadius="10">
+                <StackPanel>
+                  <DockPanel>
+                    <ui:Button DockPanel.Dock="Right" Content="测试" Command="{Binding ViewModel.TestNotificationCommand}" CommandParameter="pushplus" />
+                    <ui:ToggleSwitch IsChecked="{Binding ViewModel.Notifications.Pushplus.Enabled}" Content="Pushplus" />
+                  </DockPanel>
+                  <TextBlock Margin="0,12,0,5" Text="Token" />
+                  <PasswordBox x:Name="PushplusTokenBox" PasswordChanged="OnPushplusTokenChanged" />
+                  <TextBlock Margin="0,10,0,5" Text="群组 Topic（可选）" />
+                  <TextBox Text="{Binding ViewModel.Notifications.Pushplus.Topic, UpdateSourceTrigger=PropertyChanged}" />
+                </StackPanel>
+              </Border>
+
+              <Border Grid.Row="1" Grid.Column="2" Margin="0,16,0,0" Padding="14" Background="{DynamicResource AppInputBrush}" BorderBrush="{DynamicResource AppDividerBrush}" BorderThickness="1" CornerRadius="10">
+                <StackPanel>
+                  <DockPanel>
+                    <ui:Button DockPanel.Dock="Right" Content="测试" Command="{Binding ViewModel.TestNotificationCommand}" CommandParameter="webhook" />
+                    <ui:ToggleSwitch IsChecked="{Binding ViewModel.Notifications.Webhook.Enabled}" Content="通用 Webhook" />
+                  </DockPanel>
+                  <TextBlock Margin="0,12,0,5" Text="推送 URL（每行一个）" />
+                  <TextBox MinHeight="58" AcceptsReturn="True" TextWrapping="Wrap" Text="{Binding ViewModel.Notifications.Webhook.Urls, UpdateSourceTrigger=PropertyChanged}" />
+                  <TextBlock Margin="0,10,0,5" Text="HMAC 密钥（可选）" />
+                  <PasswordBox x:Name="WebhookSecretBox" PasswordChanged="OnWebhookSecretChanged" />
+                  <TextBlock Margin="0,10,0,5" Text="文本模板（可选）" />
+                  <TextBox MinHeight="48" AcceptsReturn="True" TextWrapping="Wrap" Text="{Binding ViewModel.Notifications.Webhook.TextTemplate, UpdateSourceTrigger=PropertyChanged}" />
+                  <TextBlock Margin="0,5,0,0" FontSize="11" Foreground="{DynamicResource AppTextTertiaryBrush}" Text="支持 &#x7B;&#x7B;text&#x7D;&#x7D;、&#x7B;&#x7B;event&#x7D;&#x7D;、&#x7B;&#x7B;time&#x7D;&#x7D;、&#x7B;&#x7B;number&#x7D;&#x7D;、&#x7B;&#x7B;content&#x7D;&#x7D;、&#x7B;&#x7B;slot_name&#x7D;&#x7D;。" TextWrapping="Wrap" />
+                </StackPanel>
+              </Border>
+
+              <Border Grid.Row="2" Grid.Column="0" Margin="0,16,0,0" Padding="14" Background="{DynamicResource AppInputBrush}" BorderBrush="{DynamicResource AppDividerBrush}" BorderThickness="1" CornerRadius="10">
+                <StackPanel>
+                  <DockPanel>
+                    <ui:Button DockPanel.Dock="Right" Content="测试" Command="{Binding ViewModel.TestNotificationCommand}" CommandParameter="wecom" />
+                    <ui:ToggleSwitch IsChecked="{Binding ViewModel.Notifications.Wecom.Enabled}" Content="企业微信机器人" />
+                  </DockPanel>
+                  <TextBlock Margin="0,12,0,5" Text="Webhook URL（每行一个）" />
+                  <TextBox MinHeight="58" AcceptsReturn="True" TextWrapping="Wrap" Text="{Binding ViewModel.Notifications.Wecom.Urls, UpdateSourceTrigger=PropertyChanged}" />
+                </StackPanel>
+              </Border>
+
+              <Border Grid.Row="2" Grid.Column="2" Margin="0,16,0,0" Padding="14" Background="{DynamicResource AppInputBrush}" BorderBrush="{DynamicResource AppDividerBrush}" BorderThickness="1" CornerRadius="10">
+                <StackPanel>
+                  <DockPanel>
+                    <ui:Button DockPanel.Dock="Right" Content="测试" Command="{Binding ViewModel.TestNotificationCommand}" CommandParameter="lark" />
+                    <ui:ToggleSwitch IsChecked="{Binding ViewModel.Notifications.Lark.Enabled}" Content="飞书 / Lark 机器人" />
+                  </DockPanel>
+                  <TextBlock Margin="0,12,0,5" Text="Webhook URL" />
+                  <TextBox Text="{Binding ViewModel.Notifications.Lark.Url, UpdateSourceTrigger=PropertyChanged}" />
+                  <ui:ToggleSwitch Margin="0,10,0,0" IsChecked="{Binding ViewModel.Notifications.Lark.SigningEnabled}" Content="启用签名校验" />
+                  <TextBlock Margin="0,10,0,5" Text="签名密钥（可选）" />
+                  <PasswordBox x:Name="LarkSecretBox" PasswordChanged="OnLarkSecretChanged" />
+                </StackPanel>
+              </Border>
+            </Grid>
+            <TextBlock Margin="0,12,0,0" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="{Binding ViewModel.NotificationStatus}" TextWrapping="Wrap" />
+          </StackPanel>
+        </Border>
       </StackPanel>
     </ScrollViewer>
   </Grid>
