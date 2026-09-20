@@ -10,8 +10,8 @@ public static class CarrierDisplayHelper
 {
     public static string GetOperatorDisplay(SimIdentity? sim)
     {
-        if (!string.IsNullOrWhiteSpace(sim?.OperatorName))
-            return sim.OperatorName;
+        if (sim != null)
+            return SimOperatorCatalog.Resolve(sim.Mcc, sim.Mnc, sim.OperatorName);
 
         return !string.IsNullOrWhiteSpace(sim?.Mcc)
             ? $"PLMN: {sim.Mcc}-{sim.Mnc}"

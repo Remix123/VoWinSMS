@@ -176,8 +176,20 @@ public class TelephonyTests
 
         Assert.Equal(new[] { ("999", "12") }, EpdgResolver.BuildHomePlmnCandidates(twoDigit));
         Assert.Equal(new[] { ("999", "123") }, EpdgResolver.BuildHomePlmnCandidates(threeDigit));
+
         Assert.True(twoDigit.IsHomePlmnAuthoritative);
         Assert.True(threeDigit.IsHomePlmnAuthoritative);
+    }
+
+    [Fact]
+    public void TestSimIdentity_ResolvesChinaBroadnetByPlmn()
+    {
+        var sim = SimIdentity.FromImsiAndIccid(
+            "460150123456789",
+            "8900000000000000002",
+            opName: "PLMN 460-15");
+
+        Assert.Equal("中国广电（China Broadnet）", sim.OperatorName);
     }
 
     [Fact]

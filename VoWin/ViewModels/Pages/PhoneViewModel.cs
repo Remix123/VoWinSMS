@@ -76,14 +76,6 @@ namespace VoWin.ViewModels.Pages
         [ObservableProperty]
         private string _dtmfSentHistory = string.Empty;
 
-        [ObservableProperty]
-        private bool _useRotaryDial = true;
-
-        [RelayCommand]
-        private void ToggleDialerMode()
-        {
-            UseRotaryDial = !UseRotaryDial;
-        }
 
         public CallState CurrentCallState => _kernelService.CurrentCallState;
         public string? ActiveCallNumber => _kernelService.CurrentCallNumber;

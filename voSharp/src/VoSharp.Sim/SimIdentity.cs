@@ -34,9 +34,7 @@ public record SimIdentity(
         var mnc = imsi.Length >= 3 + validatedMncLength
             ? imsi.Substring(3, validatedMncLength)
             : "";
-        var operatorName = string.IsNullOrWhiteSpace(opName)
-            ? $"PLMN {mcc}-{mnc}"
-            : opName.Trim();
+        var operatorName = SimOperatorCatalog.Resolve(mcc, mnc, opName);
         return new SimIdentity(
             imsi,
             iccid,
