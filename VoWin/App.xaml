@@ -15,6 +15,9 @@
                 <ResourceDictionary Source="Themes/DesignSystem.xaml" />
             </ResourceDictionary.MergedDictionaries>
 
+            <!-- Alibaba PuHuiTi is embedded as Fonts/Alibaba.ttf. -->
+            <FontFamily x:Key="AppFontFamily">/VoWin;component/Fonts/#Alibaba PuHuiTi</FontFamily>
+
             <!-- Brand-blue interaction defaults; App.ApplyBrandTheme refreshes
                  these values for light and dark themes at runtime. -->
             <SolidColorBrush x:Key="ToggleSwitchFillOn" Color="#2563EB" />

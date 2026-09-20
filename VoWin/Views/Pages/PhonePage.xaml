@@ -448,7 +448,7 @@
               <TextBlock
                 Margin="0,10,0,0"
                 FontSize="38"
-                FontFamily="Consolas, Segoe UI"
+                FontFamily="{DynamicResource AppFontFamily}"
                 FontWeight="Light"
                 Foreground="{DynamicResource AppTextPrimaryBrush}"
                 HorizontalAlignment="Center"
@@ -801,7 +801,7 @@
                   <TextBlock
                     Text="{Binding DtmfSentHistory, FallbackValue=''}"
                     FontSize="18"
-                    FontFamily="Consolas, Segoe UI"
+                    FontFamily="{DynamicResource AppFontFamily}"
                     FontWeight="Medium"
                     VerticalAlignment="Center"
                     HorizontalAlignment="Right"

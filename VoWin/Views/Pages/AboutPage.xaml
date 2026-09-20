@@ -348,7 +348,7 @@
                   >
                     <ui:TextBox
                       FontSize="10"
-                      FontFamily="Consolas, Segoe UI"
+                      FontFamily="{DynamicResource AppFontFamily}"
                       FontWeight="SemiBold"
                       Foreground="{DynamicResource AppTextPrimaryBrush}"
                       Text="{Binding TronAddress, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
@@ -461,7 +461,7 @@
                   >
                     <ui:TextBox
                       FontSize="10"
-                      FontFamily="Consolas, Segoe UI"
+                      FontFamily="{DynamicResource AppFontFamily}"
                       FontWeight="SemiBold"
                       Foreground="{DynamicResource AppTextPrimaryBrush}"
                       Text="{Binding BscAddress, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
@@ -574,7 +574,7 @@
                   >
                     <ui:TextBox
                       FontSize="10"
-                      FontFamily="Consolas, Segoe UI"
+                      FontFamily="{DynamicResource AppFontFamily}"
                       FontWeight="SemiBold"
                       Foreground="{DynamicResource AppTextPrimaryBrush}"
                       Text="{Binding PolygonAddress, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
@@ -697,7 +697,7 @@
                 Text="{Binding ProjectNotes, Mode=OneWay}"
                 IsReadOnly="True"
                 FontSize="12.5"
-                FontFamily="Consolas, Microsoft YaHei, Segoe UI"
+                FontFamily="{DynamicResource AppFontFamily}"
                 TextWrapping="Wrap"
                 AcceptsReturn="True"
                 MinHeight="90"

@@ -219,9 +219,9 @@
                   <!-- Endpoints: Virtual IP & P-CSCF -->
                   <TextBlock FontSize="12" Foreground="{DynamicResource AppTextTertiaryBrush}">
                     <Run Text="虚拟内网 IP: " />
-                    <Run Text="{Binding AssignedIp, Mode=OneWay}" FontFamily="Consolas" FontWeight="SemiBold" Foreground="{DynamicResource AppTextPrimaryBrush}" />
+                    <Run Text="{Binding AssignedIp, Mode=OneWay}" FontFamily="{DynamicResource AppFontFamily}" FontWeight="SemiBold" Foreground="{DynamicResource AppTextPrimaryBrush}" />
                     <Run Text="   ·   P-CSCF 端点: " />
-                    <Run Text="{Binding PcscfIp, Mode=OneWay}" FontFamily="Consolas" FontWeight="SemiBold" Foreground="{DynamicResource AppTextPrimaryBrush}" />
+                    <Run Text="{Binding PcscfIp, Mode=OneWay}" FontFamily="{DynamicResource AppFontFamily}" FontWeight="SemiBold" Foreground="{DynamicResource AppTextPrimaryBrush}" />
                   </TextBlock>
                 </StackPanel>
               </Grid>
@@ -477,7 +477,7 @@
                 <!-- 4. Subscriber phone number -->
                 <StackPanel Grid.Column="3" Margin="4,0,0,0">
                   <TextBlock FontSize="11" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="本机号码 (MSISDN)" />
-                  <TextBlock FontSize="15" FontFamily="Consolas" FontWeight="Bold" Margin="0,3,0,0" TextTrimming="CharacterEllipsis" Text="{Binding PhoneNumber, Mode=OneWay}" ToolTip="{Binding PhoneNumber, Mode=OneWay}" />
+                  <TextBlock FontSize="15" FontFamily="{DynamicResource AppFontFamily}" FontWeight="Bold" Margin="0,3,0,0" TextTrimming="CharacterEllipsis" Text="{Binding PhoneNumber, Mode=OneWay}" ToolTip="{Binding PhoneNumber, Mode=OneWay}" />
                   <TextBlock FontSize="11" Foreground="{DynamicResource AppTextTertiaryBrush}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" Text="{Binding PhoneNumberDetail, Mode=OneWay}" ToolTip="{Binding PhoneNumberDetail, Mode=OneWay}" />
                 </StackPanel>
               </Grid>
@@ -546,7 +546,7 @@
                   <!-- Row 0: ICCID, IMSI, IMEI -->
                   <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,8,8">
                     <TextBlock FontSize="10" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="SIM 识别码 (ICCID) · 用于识别卡片与读取偏好" />
-                    <TextBlock FontSize="11" FontFamily="Consolas" FontWeight="SemiBold" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" Text="{Binding Iccid, Mode=OneWay}" />
+                    <TextBlock FontSize="11" FontFamily="{DynamicResource AppFontFamily}" FontWeight="SemiBold" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" Text="{Binding Iccid, Mode=OneWay}" />
                     <TextBlock FontSize="10" Foreground="{DynamicResource AppAccentBrush}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis">
                       <Run Text="卡片别名：" /><Run Text="{Binding CardNicknameDisplay, Mode=OneWay}" />
                     </TextBlock>
@@ -554,7 +554,7 @@
 
                   <StackPanel Grid.Row="0" Grid.Column="1" Margin="4,0,8,8">
                     <TextBlock FontSize="10" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="国际移动用户识别码 (IMSI) · 认证归属" />
-                    <TextBlock FontSize="11" FontFamily="Consolas" FontWeight="SemiBold" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" Text="{Binding Imsi, Mode=OneWay}" />
+                    <TextBlock FontSize="11" FontFamily="{DynamicResource AppFontFamily}" FontWeight="SemiBold" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" Text="{Binding Imsi, Mode=OneWay}" />
                     <TextBlock FontSize="10" Foreground="{DynamicResource AppTextTertiaryBrush}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" Text="{Binding ImsiHomeDisplay, Mode=OneWay}" />
                     <TextBlock FontSize="10" Foreground="{DynamicResource AppTextTertiaryBrush}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" Text="{Binding ImsiSourceDisplay, Mode=OneWay}" />
                     <TextBlock FontSize="10" Foreground="{DynamicResource AppTextTertiaryBrush}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" Text="{Binding ImsiSourcesDisplay, Mode=OneWay}" ToolTip="{Binding ImsiSourcesDisplay, Mode=OneWay}" />
@@ -563,13 +563,13 @@
 
                   <StackPanel Grid.Row="0" Grid.Column="2" Margin="4,0,0,8">
                     <TextBlock FontSize="10" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="设备识别码 (IMEI)" />
-                    <TextBlock FontSize="11" FontFamily="Consolas" FontWeight="SemiBold" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" Text="{Binding Imei, Mode=OneWay}" />
+                    <TextBlock FontSize="11" FontFamily="{DynamicResource AppFontFamily}" FontWeight="SemiBold" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" Text="{Binding Imei, Mode=OneWay}" />
                   </StackPanel>
 
                   <!-- Row 1: Cell ID, Modem HW, Firmware -->
                   <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,0,8,0">
                     <TextBlock FontSize="10" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="服务小区 (Cell ID)" />
-                    <TextBlock FontSize="11" FontFamily="Consolas" FontWeight="SemiBold" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" Text="{Binding CellIdText, Mode=OneWay}" />
+                    <TextBlock FontSize="11" FontFamily="{DynamicResource AppFontFamily}" FontWeight="SemiBold" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" Text="{Binding CellIdText, Mode=OneWay}" />
                   </StackPanel>
 
                   <StackPanel Grid.Row="1" Grid.Column="1" Margin="4,0,8,0">
@@ -579,7 +579,7 @@
 
                   <StackPanel Grid.Row="1" Grid.Column="2" Margin="4,0,0,0">
                     <TextBlock FontSize="10" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="基带固件版本" />
-                    <TextBlock FontSize="11" FontFamily="Consolas" FontWeight="SemiBold" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" Text="{Binding ModemFirmware, Mode=OneWay}" />
+                    <TextBlock FontSize="11" FontFamily="{DynamicResource AppFontFamily}" FontWeight="SemiBold" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" Text="{Binding ModemFirmware, Mode=OneWay}" />
                   </StackPanel>
                 </Grid>
               </Border>
@@ -666,7 +666,7 @@
                 <!-- 4. NAT Binding -->
                 <StackPanel Grid.Column="3" Margin="4,0,0,0">
                   <TextBlock FontSize="11" Foreground="{DynamicResource AppTextSecondaryBrush}" Text="NAT 映射与端点" />
-                  <TextBlock FontSize="12" FontFamily="Consolas" FontWeight="SemiBold" Margin="0,3,0,0" TextTrimming="CharacterEllipsis" Text="{Binding NatBindingText, Mode=OneWay}" />
+                  <TextBlock FontSize="12" FontFamily="{DynamicResource AppFontFamily}" FontWeight="SemiBold" Margin="0,3,0,0" TextTrimming="CharacterEllipsis" Text="{Binding NatBindingText, Mode=OneWay}" />
                   <TextBlock FontSize="11" Foreground="{DynamicResource AppTextTertiaryBrush}" Margin="0,2,0,0" Text="RFC 3948 UDP 5060 (20s窗口)" />
                 </StackPanel>
               </Grid>
@@ -909,7 +909,7 @@
                     <!-- 1. Fixed Time (HH:mm:ss) -->
                     <TextBlock
                       Grid.Column="0"
-                      FontFamily="Consolas"
+                      FontFamily="{DynamicResource AppFontFamily}"
                       FontSize="10"
                       VerticalAlignment="Center"
                       Foreground="{DynamicResource AppTextTertiaryBrush}"
@@ -927,7 +927,7 @@
                       Background="{Binding LevelBackground, Mode=OneWay}"
                     >
                       <TextBlock
-                        FontFamily="Consolas"
+                        FontFamily="{DynamicResource AppFontFamily}"
                         FontSize="9"
                         FontWeight="Bold"
                         Foreground="{Binding LevelColor, Mode=OneWay}"
@@ -946,7 +946,7 @@
                       Background="{DynamicResource AppCardBrush}"
                     >
                       <TextBlock
-                        FontFamily="Consolas"
+                        FontFamily="{DynamicResource AppFontFamily}"
                         FontSize="9"
                         FontWeight="SemiBold"
                         Foreground="{DynamicResource AppTextSecondaryBrush}"
@@ -958,7 +958,7 @@
                     <!-- 4. Log Message -->
                     <TextBlock
                       Grid.Column="3"
-                      FontFamily="Consolas"
+                      FontFamily="{DynamicResource AppFontFamily}"
                       FontSize="11"
                       LineHeight="16"
                       Foreground="{DynamicResource AppTextPrimaryBrush}"

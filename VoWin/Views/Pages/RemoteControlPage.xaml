@@ -139,7 +139,7 @@
             </StackPanel>
             <StackPanel Grid.Column="2">
               <TextBlock FontSize="18" FontWeight="SemiBold" Text="支持的命令" />
-              <TextBlock Margin="0,8,0,0" FontFamily="Consolas" LineHeight="22" TextWrapping="Wrap"
+              <TextBlock Margin="0,8,0,0" FontFamily="{DynamicResource AppFontFamily}" LineHeight="22" TextWrapping="Wrap"
                          Text="状态&#x0a;验证码 [数量]&#x0a;短信 &lt;号码&gt; &lt;内容&gt;&#x0a;拨号 &lt;号码&gt;&#x0a;接听 / 拒接 / 挂断&#x0a;卡片 / 切卡 &lt;序号或ID&gt;&#x0a;VoWiFi 开|关&#x0a;飞行模式 开|关&#x0a;刷新" />
             </StackPanel>
           </Grid>

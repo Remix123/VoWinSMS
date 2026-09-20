@@ -6,7 +6,7 @@ namespace VoWin.Services;
 
 internal sealed class GitHubReleaseUpdateService
 {
-    private const string LatestReleaseApi = "https://api.github.com/repos/unikgyd/VoWin/releases/latest";
+    private const string LatestReleaseApi = "https://api.github.com/repos/Remix123/VoWinSMS/releases/latest";
     private static readonly HttpClient Client = CreateClient();
 
     public async Task<ReleaseUpdateInfo?> CheckAsync(Version installedVersion, CancellationToken cancellationToken)

@@ -6,6 +6,8 @@
   xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
   xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
   Title="新短信提醒"
+  FontFamily="{DynamicResource AppFontFamily}"
+  TextElement.FontFamily="{DynamicResource AppFontFamily}"
   Width="420"
   Height="162"
   AllowsTransparency="True"
@@ -204,7 +206,7 @@
               FontSize="18"
               FontWeight="Bold"
               Foreground="{DynamicResource AppInfoBrush}"
-              FontFamily="Consolas, Segoe UI"
+              FontFamily="{DynamicResource AppFontFamily}"
               VerticalAlignment="Center"
               Text="------"
             />

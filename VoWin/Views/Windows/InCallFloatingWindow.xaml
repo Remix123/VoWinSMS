@@ -6,6 +6,8 @@
   xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
   xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
   Title="通话中悬浮窗"
+  FontFamily="{DynamicResource AppFontFamily}"
+  TextElement.FontFamily="{DynamicResource AppFontFamily}"
   Width="340"
   Height="76"
   AllowsTransparency="True"

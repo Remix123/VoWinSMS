@@ -125,7 +125,7 @@
                     <DataTemplate>
                       <StackPanel Margin="0,2">
                         <TextBlock FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource AppTextPrimaryBrush}" Text="{Binding CardAndNumberDisplay, Mode=OneWay}" />
-                        <TextBlock FontSize="10" FontFamily="Consolas" Foreground="{DynamicResource AppTextTertiaryBrush}" Margin="0,2,0,0" Text="{Binding IdentityDisplay, Mode=OneWay}" />
+                        <TextBlock FontSize="10" FontFamily="{DynamicResource AppFontFamily}" Foreground="{DynamicResource AppTextTertiaryBrush}" Margin="0,2,0,0" Text="{Binding IdentityDisplay, Mode=OneWay}" />
                         <TextBlock FontSize="10" Foreground="{DynamicResource AppTextSecondaryBrush}" Margin="0,1,0,0" Text="{Binding NetworkDisplay, Mode=OneWay}" TextTrimming="CharacterEllipsis" />
                       </StackPanel>
                     </DataTemplate>
@@ -180,7 +180,7 @@
                           <StackPanel Orientation="Horizontal">
                             <TextBlock FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource AppTextPrimaryBrush}" Text="{Binding DisplayName, Mode=OneWay}" />
                             <Border Margin="8,0,0,0" Padding="6,1" Background="{DynamicResource AppCardBrush}" CornerRadius="4">
-                              <TextBlock FontSize="10" FontFamily="Consolas" Foreground="{DynamicResource AppAccentBrush}" Text="{Binding Iccid, Mode=OneWay}" />
+                              <TextBlock FontSize="10" FontFamily="{DynamicResource AppFontFamily}" Foreground="{DynamicResource AppAccentBrush}" Text="{Binding Iccid, Mode=OneWay}" />
                             </Border>
                           </StackPanel>
                           <TextBlock Margin="0,3,0,0" FontSize="10" Foreground="{DynamicResource AppTextTertiaryBrush}" Text="{Binding ImsiDisplay, Mode=OneWay}" />
