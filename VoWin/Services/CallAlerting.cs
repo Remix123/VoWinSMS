@@ -60,6 +60,10 @@ internal sealed class CallAlerting : IDisposable
         cts?.Dispose();
     }
 
+    public void StartRingback() => SoundEffectService.Instance.StartRingback();
+
+    public void StopRingback() => SoundEffectService.Instance.StopRingback();
+
     private static int FindInput()
     {
         for (var i = 0; i < WaveIn.DeviceCount; i++)
@@ -75,5 +79,10 @@ internal sealed class CallAlerting : IDisposable
     }
 
     private static bool IsModem(string name) => name.Contains("AC Interface", StringComparison.OrdinalIgnoreCase) || name.Contains("Quectel", StringComparison.OrdinalIgnoreCase);
-    public void Dispose() { StopRinging(); ReleaseHostAudio(); }
+    public void Dispose()
+    {
+        StopRinging();
+        StopRingback();
+        ReleaseHostAudio();
+    }
 }

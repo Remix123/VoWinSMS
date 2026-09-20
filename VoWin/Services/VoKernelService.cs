@@ -388,6 +388,15 @@ namespace VoWin.Services
                     CurrentCallState = e.NewState;
                     CurrentCallNumber = e.TargetNumber;
 
+                    if (e.NewState == CallState.Ringing && e.IsOutgoing)
+                    {
+                        _callAlerting.StartRingback();
+                    }
+                    else if (e.IsOutgoing && e.OldState == CallState.Ringing)
+                    {
+                        _callAlerting.StopRingback();
+                    }
+
                     if (e.NewState == CallState.Active)
                     {
                         _callStartTime = DateTime.UtcNow;
@@ -494,6 +503,7 @@ namespace VoWin.Services
                 _dispatcher.BeginInvoke(new Action(() =>
                 {
                     StopIncomingAlerting();
+                    _callAlerting.StopRingback();
                     CurrentCallState = CallState.Ended;
                     HasIncomingCall = false;
                     Views.Windows.IncomingCallFloatingWindow.Dismiss();

@@ -30,10 +30,18 @@ namespace VoWin.Services
         private byte[]? _cachedRingtoneCycle;
         private readonly object _ringtoneLock = new();
 
+        // Outgoing calls use a telephone ringback tone, distinct from the melodic
+        // ringtone used to alert the local user about an incoming call.
+        private CancellationTokenSource? _ringbackCts;
+        private WaveOut? _ringbackWaveOut;
+        private byte[]? _cachedRingbackCycle;
+        private readonly object _ringbackLock = new();
+
         public SoundEffectService()
         {
             PrecomputeDtmfTones();
             PrecomputeRingtoneCycle();
+            PrecomputeRingbackCycle();
             PrecomputeSmsChime();
         }
 
@@ -237,6 +245,113 @@ namespace VoWin.Services
             }
         }
 
+        private void PrecomputeRingbackCycle()
+        {
+            // Standard public-network ringback: a 440/480 Hz dual tone for one
+            // second followed by three seconds of silence.  A short envelope and
+            // conservative gain prevent the clicks and harshness of an abruptly
+            // started oscillator.
+            const double onDurationSeconds = 1.0;
+            const double offDurationSeconds = 3.0;
+            int onSamples = (int)(SampleRate * onDurationSeconds);
+            int offSamples = (int)(SampleRate * offDurationSeconds);
+            int fadeSamples = (int)(SampleRate * 0.02);
+            var buffer = new byte[(onSamples + offSamples) * 2];
+
+            for (int i = 0; i < onSamples; i++)
+            {
+                double envelope = 1.0;
+                if (i < fadeSamples)
+                    envelope = 0.5 * (1.0 - Math.Cos(Math.PI * i / fadeSamples));
+                else if (i >= onSamples - fadeSamples)
+                    envelope = 0.5 * (1.0 - Math.Cos(Math.PI * (onSamples - 1 - i) / fadeSamples));
+
+                double time = (double)i / SampleRate;
+                double sample = (Math.Sin(2 * Math.PI * 440 * time) +
+                                 Math.Sin(2 * Math.PI * 480 * time)) * 0.18 * envelope;
+                short pcm = (short)(sample * short.MaxValue);
+                buffer[i * 2] = (byte)(pcm & 0xFF);
+                buffer[i * 2 + 1] = (byte)((pcm >> 8) & 0xFF);
+            }
+
+            _cachedRingbackCycle = buffer;
+        }
+
+        public void StartRingback()
+        {
+            StopRingback();
+
+            lock (_ringbackLock)
+            {
+                var cts = _ringbackCts = new CancellationTokenSource();
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        while (!cts.IsCancellationRequested && _cachedRingbackCycle is { Length: > 0 } cycle)
+                            await PlayRingbackCycleAsync(cycle, cts.Token);
+                    }
+                    catch (OperationCanceledException) { }
+                }, cts.Token);
+            }
+        }
+
+        public void StopRingback()
+        {
+            lock (_ringbackLock)
+            {
+                var cts = Interlocked.Exchange(ref _ringbackCts, null);
+                cts?.Cancel();
+                cts?.Dispose();
+
+                try
+                {
+                    _ringbackWaveOut?.Stop();
+                    _ringbackWaveOut?.Dispose();
+                    _ringbackWaveOut = null;
+                }
+                catch { }
+            }
+        }
+
+        private async Task PlayRingbackCycleAsync(byte[] pcmData, CancellationToken token)
+        {
+            var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var reg = token.Register(() => tcs.TrySetCanceled(token));
+            WaveOut? player = null;
+            RawSourceWaveStream? stream = null;
+            try
+            {
+                stream = new RawSourceWaveStream(new MemoryStream(pcmData, writable: false), _waveFormat);
+                player = new WaveOut();
+                lock (_ringbackLock)
+                {
+                    if (token.IsCancellationRequested) return;
+                    _ringbackWaveOut = player;
+                }
+
+                player.PlaybackStopped += (_, _) => tcs.TrySetResult(true);
+                player.Init(stream);
+                player.Play();
+                await tcs.Task.ConfigureAwait(false);
+            }
+            finally
+            {
+                try
+                {
+                    player?.Stop();
+                    player?.Dispose();
+                    stream?.Dispose();
+                }
+                catch { }
+                lock (_ringbackLock)
+                {
+                    if (_ringbackWaveOut == player)
+                        _ringbackWaveOut = null;
+                }
+            }
+        }
+
         private async Task PlayPcmAsync(byte[] pcmData, CancellationToken token)
         {
             var tcs = new TaskCompletionSource<bool>();
@@ -352,6 +467,7 @@ namespace VoWin.Services
         public void Dispose()
         {
             StopRingtone();
+            StopRingback();
 
             lock (_dtmfLock)
             {
