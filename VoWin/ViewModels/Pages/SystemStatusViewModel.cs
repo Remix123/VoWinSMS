@@ -187,9 +187,11 @@ namespace VoWin.ViewModels.Pages
         public string Plmn =>
             !string.IsNullOrWhiteSpace(CurrentSim?.Mcc) ? $"{CurrentSim.Mcc}-{CurrentSim.Mnc}" : "--";
 
-        public string Rat => SelectedSlot?.IsFlightMode == true ? "射频关闭" : (CurrentSignal?.Rat ?? "--");
+        public string Rat => SelectedSlot?.IsFlightModeKnown == false ? "状态未知" : SelectedSlot?.IsFlightMode == true ? "射频关闭" : (CurrentSignal?.Rat ?? "--");
 
-        public string RegStatus => SelectedSlot?.IsFlightMode == true
+        public string RegStatus => SelectedSlot?.IsFlightModeKnown == false
+            ? "射频状态未知"
+            : SelectedSlot?.IsFlightMode == true
             ? "飞行模式（未搜索网络）"
             : (CurrentRegistration?.StatusDisplay ?? "网络状态未知");
 
@@ -279,6 +281,7 @@ namespace VoWin.ViewModels.Pages
 
         public string FlightModeText => SelectedSlot?.IsPcscReader == true
             ? "PC/SC（无蜂窝控制）"
+            : SelectedSlot?.IsFlightModeKnown == false ? "射频状态未知"
             : (SelectedSlot?.IsFlightMode == true) ? "飞行模式 (射频关闭)" : "射频激活 (在线)";
 
         public string SignalEvaluation => SignalBars switch
@@ -986,15 +989,22 @@ namespace VoWin.ViewModels.Pages
                 var saved = string.IsNullOrWhiteSpace(iccid)
                     ? null
                     : await _kernelService.Preferences.GetSimPreferenceAsync(iccid);
+                var modulePreference = await _kernelService.Preferences.GetModulePreferenceAsync(slot.Id, slot.Imei);
                 if (version != Volatile.Read(ref _simSwitchLoadVersion) || !ReferenceEquals(slot, SelectedSlot)) return;
 
                 _isLoadingSimSwitches = true;
                 // The modem is authoritative for the live view. Saved SIM
                 // values are fallbacks only when a firmware query is unknown.
-                VoWifiSwitchEnabled = saved?.DefaultVoWifi ?? slot.VoWifi.State != VoWifiState.Disconnected;
+                VoWifiSwitchEnabled = slot.VoWifi.State != VoWifiState.Disconnected;
                 FlightModeSwitchEnabled = slot.IsPcscReader ? false : slot.IsFlightMode;
-                CellularDataSwitchEnabled = slot.CellularDataEnabled ?? saved?.DefaultCellularData ?? false;
-                DataRoamingSwitchEnabled = slot.DataRoamingEnabled ?? saved?.DefaultDataRoaming ?? false;
+                CellularDataSwitchEnabled = slot.CellularDataEnabled
+                    ?? saved?.DefaultCellularData
+                    ?? modulePreference?.DefaultCellularData
+                    ?? false;
+                DataRoamingSwitchEnabled = slot.DataRoamingEnabled
+                    ?? saved?.DefaultDataRoaming
+                    ?? modulePreference?.DefaultDataRoaming
+                    ?? false;
             }
             catch (Exception ex)
             {

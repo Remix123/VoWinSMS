@@ -981,9 +981,18 @@ namespace VoWin.Services
 
         public async Task RefreshMetricsAsync(string? slotId = null)
         {
-            await Kernel.RefreshSignalAsync(slotId);
-            await Kernel.RefreshRegistrationAsync(slotId);
-            await Kernel.RefreshSimAsync(slotId);
+            var slot = !string.IsNullOrWhiteSpace(slotId)
+                ? Slots.FirstOrDefault(candidate => string.Equals(candidate.Id, slotId, StringComparison.OrdinalIgnoreCase))
+                : ActiveSlot;
+            if (slot != null)
+            {
+                // A single coherent modem snapshot avoids three overlapping
+                // AT transactions and, importantly, avoids cycling CFUN/SIM
+                // just because the user asked to refresh signal status.
+                await slot.RefreshMetricsAsync().ConfigureAwait(false);
+                return;
+            }
+            await Kernel.RefreshSignalAsync(slotId).ConfigureAwait(false);
         }
 
         public async Task<string> ExecuteAtCommandAsync(string command, string? slotId = null)
@@ -1163,17 +1172,14 @@ namespace VoWin.Services
                 if (voWifi)
                 {
                     if (slot.VoWifi.State == VoWifiState.Disconnected &&
-                        !await StartVoWifiAsync(slot.Id).ConfigureAwait(false))
+                        !await StartVoWifiForSlotAsync(slot, restorePreferences: false).ConfigureAwait(false))
                         return false;
                 }
                 else if (slot.VoWifi.State != VoWifiState.Disconnected &&
-                         !await StopVoWifiAsync(slot.Id).ConfigureAwait(false))
+                         !await Kernel.StopVoWifiAsync(slot.Id).ConfigureAwait(false))
                 {
                     return false;
                 }
-
-                if (!slot.IsPcscReader)
-                    await slot.RefreshSwitchStatesAsync(cancellationToken).ConfigureAwait(false);
 
                 var iccid = slot.Sim?.Iccid;
                 if (!string.IsNullOrWhiteSpace(iccid))
@@ -1444,33 +1450,33 @@ namespace VoWin.Services
         public async Task<bool> StartVoWifiAsync(string? slotId = null)
         {
             var targetSlot = (!string.IsNullOrEmpty(slotId) ? Slots.FirstOrDefault(s => s.Id == slotId) : ActiveSlot) ?? Slots.FirstOrDefault();
-            if (targetSlot != null)
-            {
-                // Restore the card's routing/radio policy, but do not schedule a
-                // second automatic start while this explicit start is in flight.
+            if (targetSlot == null) return false;
+            await ApplyPreferencesToSlotAsync(targetSlot, restoreAutoVoWifi: false).ConfigureAwait(false);
+            return await StartVoWifiForSlotAsync(targetSlot, restorePreferences: false).ConfigureAwait(false);
+        }
+
+        private async Task<bool> StartVoWifiForSlotAsync(ModemSlot targetSlot, bool restorePreferences)
+        {
+            if (restorePreferences)
                 await ApplyPreferencesToSlotAsync(targetSlot, restoreAutoVoWifi: false).ConfigureAwait(false);
 
-                // An explicit per-SIM/per-slot route wins over MCC routing.
-                // The earlier code changed only the WPF model and never updated
-                // ModemSlot in the kernel, so the actual IKE session could use a
-                // stale proxy or direct UDP.
-                var effectiveProxy = ResolveEgressProxyForSlot(targetSlot.Id);
-                if (!Kernel.SetSlotProxy(targetSlot.Id, effectiveProxy))
-                {
-                    AddLog("ERROR", "Proxy", $"Unable to apply the proxy route to slot {targetSlot.Id}.");
-                    return false;
-                }
-
-                targetSlot.ProxyUrl = effectiveProxy;
-                if (!string.IsNullOrEmpty(effectiveProxy))
-                {
-                    AddLog("INFO", "VoWiFi", $"VoWiFi 代理路由已应用至核心: {DescribeProxyEndpoint(effectiveProxy)} -> 卡槽 [{targetSlot.Name}]");
-                }
-                else AddLog("INFO", "VoWiFi", $"VoWiFi 使用直连 UDP -> 卡槽 [{targetSlot.Name}]");
+            // VoCat applies the selected device's current route immediately
+            // before opening the tunnel. Keep this separate from preference
+            // restoration so a switch transaction can call it without
+            // re-entering the per-slot preference gate.
+            var effectiveProxy = ResolveEgressProxyForSlot(targetSlot.Id);
+            if (!Kernel.SetSlotProxy(targetSlot.Id, effectiveProxy))
+            {
+                AddLog("ERROR", "Proxy", $"Unable to apply the proxy route to slot {targetSlot.Id}.");
+                return false;
             }
 
-            AddLog("INFO", "VoWiFi", $"Starting VoWiFi on slot {slotId ?? "Default"}...");
-            return await Kernel.StartVoWifiAsync(slotId);
+            targetSlot.ProxyUrl = effectiveProxy;
+            AddLog("INFO", "VoWiFi", string.IsNullOrEmpty(effectiveProxy)
+                ? $"VoWiFi 使用直连 UDP -> 卡槽 [{targetSlot.Name}]"
+                : $"VoWiFi 代理路由已应用至核心: {DescribeProxyEndpoint(effectiveProxy)} -> 卡槽 [{targetSlot.Name}]");
+            AddLog("INFO", "VoWiFi", $"Starting VoWiFi on slot {targetSlot.Id}...");
+            return await Kernel.StartVoWifiAsync(targetSlot.Id).ConfigureAwait(false);
         }
 
         public async Task<bool> StopVoWifiAsync(string? slotId = null)
@@ -2275,7 +2281,7 @@ namespace VoWin.Services
                 // A SIM preference follows the card and overrides the module.
                 // If no SIM preference exists, keep the hardware state instead
                 // of manufacturing a false value during startup reconciliation.
-                bool? preferredFlightMode = simPref?.DefaultFlightMode;
+                bool? preferredFlightMode = simPref?.DefaultFlightMode ?? modPref?.DefaultFlightMode;
                 if (!slot.IsPcscReader && preferredFlightMode.HasValue && slot.IsFlightMode != preferredFlightMode.Value)
                 {
                     try
@@ -2298,9 +2304,9 @@ namespace VoWin.Services
                     }
                 }
 
-                if (!slot.IsPcscReader && !slot.IsFlightMode && simPref != null)
+                if (!slot.IsPcscReader && !slot.IsFlightMode && (simPref != null || modPref != null))
                 {
-                    bool? preferredRoaming = simPref?.DefaultDataRoaming ?? false;
+                    bool? preferredRoaming = simPref?.DefaultDataRoaming ?? modPref?.DefaultDataRoaming;
                     if (preferredRoaming.HasValue)
                     {
                         try
@@ -2316,7 +2322,7 @@ namespace VoWin.Services
                         }
                     }
 
-                    bool? preferredCellularData = simPref?.DefaultCellularData ?? false;
+                    bool? preferredCellularData = simPref?.DefaultCellularData ?? modPref?.DefaultCellularData;
                     if (preferredCellularData.HasValue)
                     {
                         try
@@ -2332,21 +2338,17 @@ namespace VoWin.Services
                         }
                     }
 
-                    try { await slot.RefreshMetricsAsync().ConfigureAwait(false); }
-                    catch (Exception ex) { AddLog("WARN", "Preferences", $"偏好恢复后的网络刷新失败: {ex.Message}"); }
                 }
 
                 if (!slot.IsPcscReader)
                 {
-                    try { await slot.RefreshSwitchStatesAsync().ConfigureAwait(false); }
-                    catch (Exception ex) { AddLog("WARN", "Preferences", $"读取模组开关状态失败: {ex.Message}"); }
                     try { await slot.RefreshMetricsAsync().ConfigureAwait(false); }
                     catch (Exception ex) { AddLog("WARN", "Preferences", $"偏好恢复后的网络刷新失败: {ex.Message}"); }
                 }
 
-                if (restoreAutoVoWifi && simPref != null)
+                if (restoreAutoVoWifi && (simPref != null || modPref != null))
                 {
-                    var autoVoWifi = simPref.DefaultVoWifi;
+                    var autoVoWifi = simPref?.DefaultVoWifi ?? modPref?.DefaultVoWifi ?? false;
                     if (autoVoWifi)
                     {
                         QueueAutoVoWifiStart(slot);
@@ -2896,5 +2898,3 @@ namespace VoWin.Services
         }
     }
 }
-
-

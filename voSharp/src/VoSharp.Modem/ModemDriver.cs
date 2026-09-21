@@ -511,17 +511,16 @@ public class ModemDriver : IAsyncDisposable
     public async Task<int> GetFlightModeAsync(CancellationToken ct = default)
     {
         var resp = await _session.ExecuteCommandAsync("AT+CFUN?", 2000, ct).ConfigureAwait(false);
-        if (resp.Success)
-        {
-            var match = Regex.Match(resp.FirstDataLine, @"\+CFUN:\s*(\d+)");
-            if (match.Success && int.TryParse(match.Groups[1].Value, out var cfun))
-            {
-                _isRadioDisabled = cfun is 0 or 4;
-                _isRadioStateKnown = true;
-                return cfun;
-            }
-        }
-        return 1;
+        if (!resp.Success)
+            throw new InvalidOperationException($"AT+CFUN? failed: {string.Join(" ", resp.Lines)}");
+
+        var match = Regex.Match(resp.FirstDataLine, @"\+CFUN:\s*(\d+)");
+        if (!match.Success || !int.TryParse(match.Groups[1].Value, out var cfun))
+            throw new InvalidOperationException("AT+CFUN? returned no functional-level value.");
+
+        _isRadioDisabled = cfun is 0 or 4;
+        _isRadioStateKnown = true;
+        return cfun;
     }
 
     private bool ShouldPublishUrc(string line)

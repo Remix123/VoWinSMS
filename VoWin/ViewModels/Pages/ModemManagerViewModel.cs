@@ -447,13 +447,14 @@ namespace VoWin.ViewModels.Pages
             StatusMessage = $"正在启动 [{SelectedSlot.Name}] 的 VoWiFi 隧道...";
             try
             {
-                // Start through the application service so the effective per-SIM,
-                // per-slot or MCC country route is applied to the kernel first.
-                // Calling ModemSlot directly bypasses country routing and silently
-                // leaves the IKE/ESP session on direct UDP.
-                bool ok = await _kernelService.StartVoWifiAsync(SelectedSlot.Id);
-                StatusMessage = ok ? "VoWiFi 隧道建立成功！" : "VoWiFi 隧道建立失败。";
-                OnPropertyChanged(nameof(SelectedSlot));
+                bool ok = await _kernelService.ApplySimSwitchesAsync(
+                    SelectedSlot.Id,
+                    ModuleFlightMode,
+                    true,
+                    ModuleCellularData,
+                    ModuleDataRoaming);
+                await LoadPreferencesForSlotAsync(SelectedSlot);
+                StatusMessage = ok ? "VoWiFi 隧道建立成功，开关状态已保存。" : "VoWiFi 隧道建立失败，状态未保存。";
             }
             catch (Exception ex)
             {
@@ -473,9 +474,14 @@ namespace VoWin.ViewModels.Pages
             StatusMessage = $"正在断开 [{SelectedSlot.Name}] 的 VoWiFi 隧道...";
             try
             {
-                await _kernelService.StopVoWifiAsync(SelectedSlot.Id);
-                StatusMessage = "VoWiFi 隧道已断开。";
-                OnPropertyChanged(nameof(SelectedSlot));
+                bool ok = await _kernelService.ApplySimSwitchesAsync(
+                    SelectedSlot.Id,
+                    ModuleFlightMode,
+                    false,
+                    ModuleCellularData,
+                    ModuleDataRoaming);
+                await LoadPreferencesForSlotAsync(SelectedSlot);
+                StatusMessage = ok ? "VoWiFi 隧道已断开，开关状态已保存。" : "VoWiFi 断开失败，状态未保存。";
             }
             catch (Exception ex)
             {
@@ -497,7 +503,13 @@ namespace VoWin.ViewModels.Pages
             {
                 await _kernelService.StopVoWifiAsync(SelectedSlot.Id);
                 await Task.Delay(500);
-                bool ok = await _kernelService.StartVoWifiAsync(SelectedSlot.Id);
+                bool ok = await _kernelService.ApplySimSwitchesAsync(
+                    SelectedSlot.Id,
+                    ModuleFlightMode,
+                    true,
+                    ModuleCellularData,
+                    ModuleDataRoaming);
+                await LoadPreferencesForSlotAsync(SelectedSlot);
                 StatusMessage = ok ? "VoWiFi 隧道重连成功！" : "VoWiFi 隧道重连失败。";
                 OnPropertyChanged(nameof(SelectedSlot));
             }
@@ -559,8 +571,10 @@ namespace VoWin.ViewModels.Pages
 
         private void OnObservedSlotPropertyChanged(object? sender, PropertyChangedEventArgs e)
         {
+            if (sender is ModemSlot)
+                RefreshSummaryProperties();
             if (sender is ModemSlot slot &&
-                e.PropertyName is nameof(ModemSlot.IsFlightMode) or nameof(ModemSlot.CellularDataEnabled) or nameof(ModemSlot.DataRoamingEnabled))
+                e.PropertyName is nameof(ModemSlot.IsFlightMode) or nameof(ModemSlot.IsFlightModeKnown) or nameof(ModemSlot.CellularDataEnabled) or nameof(ModemSlot.DataRoamingEnabled))
             {
                 App.Current?.Dispatcher.BeginInvoke(new Action(() => SyncLiveSwitchProperties(slot)),
                     System.Windows.Threading.DispatcherPriority.DataBind);
@@ -622,9 +636,17 @@ namespace VoWin.ViewModels.Pages
                 // policy is only a fallback when a modem does not expose a
                 // particular readback command.
                 ModuleFlightMode = slot.IsPcscReader ? false : slot.IsFlightMode;
-                ModuleVoWifi = simPref?.DefaultVoWifi ?? slot.VoWifi.State != VoWifiState.Disconnected;
-                ModuleCellularData = slot.CellularDataEnabled ?? simPref?.DefaultCellularData ?? false;
-                ModuleDataRoaming = slot.DataRoamingEnabled ?? simPref?.DefaultDataRoaming ?? false;
+                // Live state is authoritative for the switch panel. Persisted
+                // values are only used when the modem cannot provide a readback.
+                ModuleVoWifi = slot.VoWifi.State != VoWifiState.Disconnected;
+                ModuleCellularData = slot.CellularDataEnabled
+                    ?? simPref?.DefaultCellularData
+                    ?? modPref?.DefaultCellularData
+                    ?? false;
+                ModuleDataRoaming = slot.DataRoamingEnabled
+                    ?? simPref?.DefaultDataRoaming
+                    ?? modPref?.DefaultDataRoaming
+                    ?? false;
 
                 if (simPref != null)
                 {
@@ -1439,10 +1461,14 @@ namespace VoWin.ViewModels.Pages
         public Brush SelectedSlotSimBrush => !string.IsNullOrEmpty(SelectedSlot?.Sim?.Imsi) ? TokenSuccess : TokenMuted;
         public Brush SelectedSlotSimBg => !string.IsNullOrEmpty(SelectedSlot?.Sim?.Imsi) ? TokenSuccessBg : TokenMutedBg;
 
-        public string SelectedSlotRatText => SelectedSlot?.IsFlightMode == true
+        public string SelectedSlotRatText => SelectedSlot?.IsFlightModeKnown == false
+            ? "状态未知"
+            : SelectedSlot?.IsFlightMode == true
             ? "射频关闭"
             : (!string.IsNullOrEmpty(SelectedSlot?.Signal?.Rat) ? SelectedSlot.Signal.Rat : "--");
-        public string SelectedSlotRegStatusText => SelectedSlot?.IsFlightMode == true
+        public string SelectedSlotRegStatusText => SelectedSlot?.IsFlightModeKnown == false
+            ? "射频状态未知"
+            : SelectedSlot?.IsFlightMode == true
             ? "飞行模式（未搜索网络）"
             : (SelectedSlot?.Registration?.StatusDisplay ?? "网络状态未知");
 

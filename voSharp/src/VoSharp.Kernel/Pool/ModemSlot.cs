@@ -338,7 +338,7 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
 
     public string StatusDisplay => IsFlightMode ? "飞行模式" : State switch
     {
-        SlotState.Online => "在线",
+        SlotState.Online => IsFlightModeKnown ? "在线" : "状态未知",
         SlotState.Busy => "忙碌",
         SlotState.Error => "异常",
         _ => "离线"
@@ -351,6 +351,7 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
     {
         get
         {
+            if (!IsFlightModeKnown) return "射频状态未知";
             if (IsFlightMode) return "射频关闭";
             var signal = Signal;
             if (signal == null || signal.RssiRaw == 99 || signal.RssiDbm is 0 or 99)
@@ -416,11 +417,26 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
     }
 
     private bool _isFlightMode;
+    private bool _isFlightModeKnown;
+    public bool IsFlightModeKnown
+    {
+        get => IsPcscReader || _isFlightModeKnown;
+        private set
+        {
+            if (_isFlightModeKnown == value) return;
+            _isFlightModeKnown = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(StatusDisplay));
+            OnPropertyChanged(nameof(SignalStrengthDisplay));
+        }
+    }
+
     public bool IsFlightMode
     {
         get => _isFlightMode;
         set
         {
+            IsFlightModeKnown = true;
             if (_isFlightMode == value) return;
             _isFlightMode = value;
             OnPropertyChanged();
@@ -851,9 +867,9 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
             try
             {
                 var cfun = await driver.GetFlightModeAsync(ct).ConfigureAwait(false);
-                IsFlightMode = (cfun == 4 || cfun == 0);
+                IsFlightMode = cfun is 4 or 0;
             }
-            catch { }
+            catch { IsFlightModeKnown = false; }
 
             // Probe device metadata
             await driver.GetFirmwareRevisionAsync(ct).ConfigureAwait(false);
@@ -987,6 +1003,7 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
         Sms = null;
         Signal = null;
         Registration = null;
+        IsFlightModeKnown = false;
         CellularDataEnabled = null;
         DataRoamingEnabled = null;
         CellularUsbAudioAvailable = false;
@@ -1009,6 +1026,13 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
     /// </summary>
     public async Task RefreshMetricsAsync(CancellationToken ct = default)
     {
+        await _switchControlGate.WaitAsync(ct).ConfigureAwait(false);
+        try { await RefreshMetricsCoreAsync(ct).ConfigureAwait(false); }
+        finally { _switchControlGate.Release(); }
+    }
+
+    private async Task RefreshMetricsCoreAsync(CancellationToken ct)
+    {
         if (IsPcscReader)
         {
             if (Aka is not PcscAkaProvider pcsc || !await pcsc.CheckReadyAsync(Sim?.Iccid, ct).ConfigureAwait(false))
@@ -1017,24 +1041,36 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
                 LastSeen = DateTime.UtcNow;
             return;
         }
-        if (Modem == null || !Modem.IsOpen) return;
-        if (Calls.ActiveCall != null) return; // avoid baseband collision during call
+        if (Modem == null || !Modem.IsOpen || Calls.ActiveCall != null) return;
 
+        var modeKnown = false;
         try
         {
             var cfun = await Modem.GetFlightModeAsync(ct).ConfigureAwait(false);
-            IsFlightMode = (cfun == 4 || cfun == 0);
+            IsFlightMode = cfun is 4 or 0;
+            modeKnown = true;
             if (IsFlightMode)
             {
+                CellularDataEnabled = false;
+                DataRoamingEnabled = false;
                 ClearRadioMetrics();
                 LastSeen = DateTime.UtcNow;
                 return;
             }
             Signal = await Modem.GetSignalAsync(ct).ConfigureAwait(false);
             Registration = await Modem.GetRegistrationAsync(ct).ConfigureAwait(false);
+            CellularDataEnabled = await ReadBooleanSettingAsync(
+                "AT+CGATT?", @"\+CGATT:\s*(\d+)", ct).ConfigureAwait(false);
+            DataRoamingEnabled = await ReadRoamingSettingAsync(ct).ConfigureAwait(false);
             LastSeen = DateTime.UtcNow;
         }
-        catch { }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            if (!modeKnown) IsFlightModeKnown = false;
+            // Preserve the last confirmed state on a transient transport
+            // failure. VoCat reports a warning rather than turning a failed
+            // read into an artificial Offline/false value.
+        }
     }
 
     /// <summary>
@@ -1596,13 +1632,13 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
             if (enabled)
             {
                 CellularDataEnabled = false;
+                DataRoamingEnabled = false;
                 ClearRadioMetrics();
             }
             else
             {
                 await RefreshSimAsync(ct).ConfigureAwait(false);
-                await RefreshMetricsAsync(ct).ConfigureAwait(false);
-                await RefreshSwitchStatesCoreAsync(ct).ConfigureAwait(false);
+                await RefreshMetricsCoreAsync(ct).ConfigureAwait(false);
             }
             return true;
         }
@@ -1676,7 +1712,13 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
             return;
         }
 
-        var cfun = await Modem.GetFlightModeAsync(ct).ConfigureAwait(false);
+        int cfun;
+        try { cfun = await Modem.GetFlightModeAsync(ct).ConfigureAwait(false); }
+        catch
+        {
+            IsFlightModeKnown = false;
+            throw;
+        }
         IsFlightMode = cfun is 0 or 4;
         if (IsFlightMode)
         {
