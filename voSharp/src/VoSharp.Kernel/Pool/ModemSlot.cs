@@ -64,6 +64,7 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
 {
     private readonly SemaphoreSlim _profileSwitchGate = new(1, 1);
     private readonly SemaphoreSlim _euiccProbeGate = new(1, 1);
+    private readonly SemaphoreSlim _switchControlGate = new(1, 1);
     private readonly SimIdentityHistoryStore _identityHistory;
     private int _profileSwitchInProgress;
 
@@ -425,6 +426,30 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
             OnPropertyChanged();
             OnPropertyChanged(nameof(StatusDisplay));
             OnPropertyChanged(nameof(SignalStrengthDisplay));
+        }
+    }
+
+    private bool? _cellularDataEnabled;
+    public bool? CellularDataEnabled
+    {
+        get => _cellularDataEnabled;
+        private set
+        {
+            if (_cellularDataEnabled == value) return;
+            _cellularDataEnabled = value;
+            OnPropertyChanged();
+        }
+    }
+
+    private bool? _dataRoamingEnabled;
+    public bool? DataRoamingEnabled
+    {
+        get => _dataRoamingEnabled;
+        private set
+        {
+            if (_dataRoamingEnabled == value) return;
+            _dataRoamingEnabled = value;
+            OnPropertyChanged();
         }
     }
 
@@ -900,6 +925,20 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
             {
                 ClearRadioMetrics();
             }
+            else
+            {
+                // Read the modem-side controls before publishing Online. The
+                // UI and preference reconciler must start from hardware state,
+                // not from stale values left in a previous view model.
+                try { await RefreshSwitchStatesAsync(ct).ConfigureAwait(false); }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    CellularDataEnabled = null;
+                    DataRoamingEnabled = null;
+                    _eventBus.Publish(EventTopics.SystemLog, "Modem",
+                        $"Slot {Id}: switch state read failed; values remain unknown. reason={ex.Message}");
+                }
+            }
 
             SetState(SlotState.Online);
             LastSeen = DateTime.UtcNow;
@@ -948,6 +987,8 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
         Sms = null;
         Signal = null;
         Registration = null;
+        CellularDataEnabled = null;
+        DataRoamingEnabled = null;
         CellularUsbAudioAvailable = false;
         _cellularCallMonitorCts?.Cancel();
         if (HasCellularCall)
@@ -1542,22 +1583,30 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
     {
         if (IsPcscReader)
             throw new InvalidOperationException("PC/SC 读卡器没有蜂窝射频，无法切换飞行模式。");
-        if (Modem == null || !Modem.IsOpen) return false;
-        bool ok = await Modem.SetFlightModeAsync(enabled, ct).ConfigureAwait(false);
-        if (ok)
+        await _switchControlGate.WaitAsync(ct).ConfigureAwait(false);
+        try
         {
-            IsFlightMode = enabled;
+            if (Modem == null || !Modem.IsOpen) return false;
+            bool ok = await Modem.SetFlightModeAsync(enabled, ct).ConfigureAwait(false);
+            if (!ok) return false;
+
+            var cfun = await Modem.GetFlightModeAsync(ct).ConfigureAwait(false);
+            IsFlightMode = cfun is 0 or 4;
+            if (IsFlightMode != enabled) return false;
             if (enabled)
             {
+                CellularDataEnabled = false;
                 ClearRadioMetrics();
             }
             else
             {
                 await RefreshSimAsync(ct).ConfigureAwait(false);
                 await RefreshMetricsAsync(ct).ConfigureAwait(false);
+                await RefreshSwitchStatesCoreAsync(ct).ConfigureAwait(false);
             }
+            return true;
         }
-        return ok;
+        finally { _switchControlGate.Release(); }
     }
 
     /// <summary>
@@ -1567,10 +1616,18 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
     {
         if (IsPcscReader)
             throw new NotSupportedException("PC/SC 卡槽没有蜂窝数据附着功能。");
-        if (Modem == null || !Modem.IsOpen || IsFlightMode) return false;
-        var response = await Modem.SendRawAtCommandAsync(
-            $"AT+CGATT={(enabled ? 1 : 0)}", 10000, ct).ConfigureAwait(false);
-        return response.Success;
+        await _switchControlGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (Modem == null || !Modem.IsOpen || IsFlightMode) return false;
+            var response = await Modem.SendRawAtCommandAsync(
+                $"AT+CGATT={(enabled ? 1 : 0)}", 10000, ct).ConfigureAwait(false);
+            if (!response.Success) return false;
+            var actual = await ReadBooleanSettingAsync("AT+CGATT?", @"\+CGATT:\s*(\d+)", ct).ConfigureAwait(false);
+            CellularDataEnabled = actual;
+            return actual == enabled;
+        }
+        finally { _switchControlGate.Release(); }
     }
 
     /// <summary>
@@ -1582,13 +1639,78 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
     {
         if (IsPcscReader)
             throw new NotSupportedException("PC/SC 卡槽没有蜂窝漫游控制功能。");
-        if (Modem == null || !Modem.IsOpen || IsFlightMode) return false;
-        var value = enabled ? 1 : 0;
-        var qcfg = await Modem.SendRawAtCommandAsync(
-            $"AT+QCFG=\"roamsvc\",{value}", 3000, ct).ConfigureAwait(false);
-        var qnwcfg = await Modem.SendRawAtCommandAsync(
-            $"AT+QNWCFG=\"roaming\",{value}", 3000, ct).ConfigureAwait(false);
-        return qcfg.Success || qnwcfg.Success;
+        await _switchControlGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (Modem == null || !Modem.IsOpen || IsFlightMode) return false;
+            var value = enabled ? 1 : 0;
+            var qcfg = await Modem.SendRawAtCommandAsync(
+                $"AT+QCFG=\"roamsvc\",{value}", 3000, ct).ConfigureAwait(false);
+            var qnwcfg = await Modem.SendRawAtCommandAsync(
+                $"AT+QNWCFG=\"roaming\",{value}", 3000, ct).ConfigureAwait(false);
+            if (!qcfg.Success && !qnwcfg.Success) return false;
+            var actual = await ReadRoamingSettingAsync(ct).ConfigureAwait(false);
+            DataRoamingEnabled = actual;
+            return actual == enabled;
+        }
+        finally { _switchControlGate.Release(); }
+    }
+
+    /// <summary>
+    /// Reads the modem-side switch values. Unsupported or unavailable queries
+    /// remain unknown instead of being silently converted into false.
+    /// </summary>
+    public async Task RefreshSwitchStatesAsync(CancellationToken ct = default)
+    {
+        await _switchControlGate.WaitAsync(ct).ConfigureAwait(false);
+        try { await RefreshSwitchStatesCoreAsync(ct).ConfigureAwait(false); }
+        finally { _switchControlGate.Release(); }
+    }
+
+    private async Task RefreshSwitchStatesCoreAsync(CancellationToken ct)
+    {
+        if (IsPcscReader || Modem == null || !Modem.IsOpen)
+        {
+            CellularDataEnabled = null;
+            DataRoamingEnabled = null;
+            return;
+        }
+
+        var cfun = await Modem.GetFlightModeAsync(ct).ConfigureAwait(false);
+        IsFlightMode = cfun is 0 or 4;
+        if (IsFlightMode)
+        {
+            CellularDataEnabled = false;
+            DataRoamingEnabled = false;
+            return;
+        }
+
+        CellularDataEnabled = await ReadBooleanSettingAsync(
+            "AT+CGATT?", @"\+CGATT:\s*(\d+)", ct).ConfigureAwait(false);
+        DataRoamingEnabled = await ReadRoamingSettingAsync(ct).ConfigureAwait(false);
+    }
+
+    private async Task<bool?> ReadRoamingSettingAsync(CancellationToken ct)
+    {
+        var value = await ReadBooleanSettingAsync(
+            "AT+QCFG=\"roamsvc\"", @"\+QCFG:\s*""roamsvc""\s*,\s*(\d+)", ct).ConfigureAwait(false);
+        if (value.HasValue) return value;
+        return await ReadBooleanSettingAsync(
+            "AT+QNWCFG=\"roaming\"", @"\+QNWCFG:\s*""roaming""\s*,\s*(\d+)", ct).ConfigureAwait(false);
+    }
+
+    private async Task<bool?> ReadBooleanSettingAsync(string command, string pattern, CancellationToken ct)
+    {
+        if (Modem == null || !Modem.IsOpen) return null;
+        var response = await Modem.SendRawAtCommandAsync(command, 3000, ct).ConfigureAwait(false);
+        if (!response.Success) return null;
+        foreach (var line in response.Lines)
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(line, pattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (match.Success && int.TryParse(match.Groups[1].Value, out var value))
+                return value != 0;
+        }
+        return null;
     }
 
     private void ClearRadioMetrics()

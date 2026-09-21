@@ -61,6 +61,7 @@ namespace VoWin.Services
         Task<string> ExecuteAtCommandAsync(string command, string? slotId = null);
         Task<string> SendUssdAsync(string code, string? slotId = null);
         Task<bool> SetFlightModeAsync(bool enable, string? slotId = null);
+        Task<bool> ApplySimSwitchesAsync(string slotId, bool flightMode, bool voWifi, bool cellularData, bool dataRoaming, CancellationToken cancellationToken = default);
         Task<bool> RebootModemAsync(string? slotId = null);
         Task<(bool Success, long RttMs, string Status)> ProbeVoWifiLivenessAsync(string? slotId = null);
 

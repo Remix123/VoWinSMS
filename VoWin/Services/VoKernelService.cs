@@ -56,6 +56,7 @@ namespace VoWin.Services
         }
 
         private readonly ConcurrentDictionary<string, byte> _autoVoWifiStarts = new(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, SemaphoreSlim> _preferenceApplyGates = new(StringComparer.OrdinalIgnoreCase);
         public IVoKernel Kernel { get; }
 
         public ObservableCollection<ModemSlot> Slots { get; } = new();
@@ -1095,7 +1096,16 @@ namespace VoWin.Services
 
                 if (slot != null)
                 {
-                    var applied = await slot.SetFlightModeAsync(enable);
+                    var iccid = slot.Sim?.Iccid;
+                    var saved = string.IsNullOrWhiteSpace(iccid)
+                        ? null
+                        : await Preferences.GetSimPreferenceAsync(iccid);
+                    var applied = await ApplySimSwitchesAsync(
+                        slot.Id,
+                        enable,
+                        saved?.DefaultVoWifi ?? slot.VoWifi.State != VoWifiState.Disconnected,
+                        saved?.DefaultCellularData ?? slot.CellularDataEnabled ?? false,
+                        saved?.DefaultDataRoaming ?? slot.DataRoamingEnabled ?? false);
                     AddLog(applied ? "INFO" : "WARN", "Modem", applied
                         ? $"飞行模式已确认{(enable ? "开启 (CFUN=4)" : "关闭 (CFUN=1)")}。"
                         : $"飞行模式未生效：模组没有确认 CFUN={(enable ? 4 : 1)}。偏好未更新。");
@@ -1108,6 +1118,81 @@ namespace VoWin.Services
             {
                 AddLog("ERROR", "Modem", $"设置飞行模式失败: {ex.Message}");
                 return false;
+            }
+        }
+
+        public async Task<bool> ApplySimSwitchesAsync(
+            string slotId,
+            bool flightMode,
+            bool voWifi,
+            bool cellularData,
+            bool dataRoaming,
+            CancellationToken cancellationToken = default)
+        {
+            if (!Kernel.Pool.Slots.TryGetValue(slotId, out var slot) || slot == null)
+                return false;
+
+            var applyGate = _preferenceApplyGates.GetOrAdd(slot.Id, _ => new SemaphoreSlim(1, 1));
+            await applyGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (slot.IsPcscReader)
+                {
+                    flightMode = false;
+                    cellularData = false;
+                    dataRoaming = false;
+                }
+                else
+                {
+                    if (slot.IsFlightMode != flightMode &&
+                        !await slot.SetFlightModeAsync(flightMode, cancellationToken).ConfigureAwait(false))
+                        return false;
+
+                    // Keep the requested data/roaming policy in SQLite while
+                    // flight mode is on, but only touch hardware controls when
+                    // RF is actually available.
+                    if (!slot.IsFlightMode)
+                    {
+                        if (!await slot.SetDataRoamingEnabledAsync(dataRoaming, cancellationToken).ConfigureAwait(false))
+                            return false;
+                        if (!await slot.SetCellularDataEnabledAsync(cellularData, cancellationToken).ConfigureAwait(false))
+                            return false;
+                    }
+                }
+
+                if (voWifi)
+                {
+                    if (slot.VoWifi.State == VoWifiState.Disconnected &&
+                        !await StartVoWifiAsync(slot.Id).ConfigureAwait(false))
+                        return false;
+                }
+                else if (slot.VoWifi.State != VoWifiState.Disconnected &&
+                         !await StopVoWifiAsync(slot.Id).ConfigureAwait(false))
+                {
+                    return false;
+                }
+
+                if (!slot.IsPcscReader)
+                    await slot.RefreshSwitchStatesAsync(cancellationToken).ConfigureAwait(false);
+
+                var iccid = slot.Sim?.Iccid;
+                if (!string.IsNullOrWhiteSpace(iccid))
+                {
+                    var existing = await Preferences.GetSimPreferenceAsync(iccid).ConfigureAwait(false);
+                    await SaveSimPreferencesAsync(
+                        iccid,
+                        flightMode,
+                        voWifi,
+                        cellularData,
+                        dataRoaming,
+                        existing?.DedicatedProxyUrl,
+                        existing?.CardNickname).ConfigureAwait(false);
+                }
+                return true;
+            }
+            finally
+            {
+                applyGate.Release();
             }
         }
 
@@ -2141,6 +2226,8 @@ namespace VoWin.Services
 
         private async Task ApplyPreferencesToSlotAsync(ModemSlot slot, bool restoreAutoVoWifi)
         {
+            var applyGate = _preferenceApplyGates.GetOrAdd(slot.Id, _ => new SemaphoreSlim(1, 1));
+            await applyGate.WaitAsync().ConfigureAwait(false);
             try
             {
                 var modPref = await Preferences.GetModulePreferenceAsync(slot.Id, slot.Imei);
@@ -2185,13 +2272,10 @@ namespace VoWin.Services
 
                 ApplyVoWifiHomeIdentity(slot, simPref);
 
-                // A SIM preference follows the card and overrides the module
-                // default. Restore RF state before starting any background work
-                // that could report cellular registration or signal state.
-                // Radio/data/VoWiFi switches belong to the SIM, never to the
-                // physical slot.  A SIM without a saved record starts with all
-                // switches off so moving it to another modem is predictable.
-                bool? preferredFlightMode = simPref?.DefaultFlightMode ?? false;
+                // A SIM preference follows the card and overrides the module.
+                // If no SIM preference exists, keep the hardware state instead
+                // of manufacturing a false value during startup reconciliation.
+                bool? preferredFlightMode = simPref?.DefaultFlightMode;
                 if (!slot.IsPcscReader && preferredFlightMode.HasValue && slot.IsFlightMode != preferredFlightMode.Value)
                 {
                     try
@@ -2214,7 +2298,7 @@ namespace VoWin.Services
                     }
                 }
 
-                if (!slot.IsPcscReader && !slot.IsFlightMode)
+                if (!slot.IsPcscReader && !slot.IsFlightMode && simPref != null)
                 {
                     bool? preferredRoaming = simPref?.DefaultDataRoaming ?? false;
                     if (preferredRoaming.HasValue)
@@ -2252,9 +2336,17 @@ namespace VoWin.Services
                     catch (Exception ex) { AddLog("WARN", "Preferences", $"偏好恢复后的网络刷新失败: {ex.Message}"); }
                 }
 
-                if (restoreAutoVoWifi)
+                if (!slot.IsPcscReader)
                 {
-                    var autoVoWifi = simPref?.DefaultVoWifi ?? false;
+                    try { await slot.RefreshSwitchStatesAsync().ConfigureAwait(false); }
+                    catch (Exception ex) { AddLog("WARN", "Preferences", $"读取模组开关状态失败: {ex.Message}"); }
+                    try { await slot.RefreshMetricsAsync().ConfigureAwait(false); }
+                    catch (Exception ex) { AddLog("WARN", "Preferences", $"偏好恢复后的网络刷新失败: {ex.Message}"); }
+                }
+
+                if (restoreAutoVoWifi && simPref != null)
+                {
+                    var autoVoWifi = simPref.DefaultVoWifi;
                     if (autoVoWifi)
                     {
                         QueueAutoVoWifiStart(slot);
@@ -2271,6 +2363,10 @@ namespace VoWin.Services
             catch (Exception ex)
             {
                 AddLog("WARN", "Preferences", $"Apply preferences failed: {ex.Message}");
+            }
+            finally
+            {
+                applyGate.Release();
             }
         }
 
@@ -2800,10 +2896,5 @@ namespace VoWin.Services
         }
     }
 }
-
-
-
-
-
 
 

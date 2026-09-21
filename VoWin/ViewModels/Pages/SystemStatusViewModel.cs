@@ -989,12 +989,12 @@ namespace VoWin.ViewModels.Pages
                 if (version != Volatile.Read(ref _simSwitchLoadVersion) || !ReferenceEquals(slot, SelectedSlot)) return;
 
                 _isLoadingSimSwitches = true;
-                // No saved ICCID means all functions start disabled. Existing
-                // saved values remain intact when a card is moved between slots.
-                VoWifiSwitchEnabled = saved?.DefaultVoWifi ?? false;
-                FlightModeSwitchEnabled = saved?.DefaultFlightMode ?? false;
-                CellularDataSwitchEnabled = saved?.DefaultCellularData ?? false;
-                DataRoamingSwitchEnabled = saved?.DefaultDataRoaming ?? false;
+                // The modem is authoritative for the live view. Saved SIM
+                // values are fallbacks only when a firmware query is unknown.
+                VoWifiSwitchEnabled = saved?.DefaultVoWifi ?? slot.VoWifi.State != VoWifiState.Disconnected;
+                FlightModeSwitchEnabled = slot.IsPcscReader ? false : slot.IsFlightMode;
+                CellularDataSwitchEnabled = slot.CellularDataEnabled ?? saved?.DefaultCellularData ?? false;
+                DataRoamingSwitchEnabled = slot.DataRoamingEnabled ?? saved?.DefaultDataRoaming ?? false;
             }
             catch (Exception ex)
             {
@@ -1016,8 +1016,7 @@ namespace VoWin.ViewModels.Pages
         private async Task PersistAndApplySimSwitchesAsync()
         {
             var slot = SelectedSlot;
-            var iccid = slot?.Sim?.Iccid;
-            if (slot == null || string.IsNullOrWhiteSpace(iccid))
+            if (slot == null)
             {
                 StatusMessage = "请先选择已识别 SIM 卡的通信设备。";
                 return;
@@ -1027,83 +1026,20 @@ namespace VoWin.ViewModels.Pages
             try
             {
                 if (!ReferenceEquals(slot, SelectedSlot)) return;
-
-                // A PC/SC reader has no baseband. Its SIM can still start
-                // VoWiFi and use IMS calls/SMS, but it cannot apply CFUN,
-                // CGATT, or roaming AT commands. Keep those saved values
-                // deterministic and never issue unsupported controls.
-                if (slot.IsPcscReader)
-                {
-                    _isLoadingSimSwitches = true;
-                    FlightModeSwitchEnabled = false;
-                    CellularDataSwitchEnabled = false;
-                    DataRoamingSwitchEnabled = false;
-                    _isLoadingSimSwitches = false;
-                }
-
-                if (!slot.IsPcscReader && slot.IsFlightMode != FlightModeSwitchEnabled)
-                {
-                    StatusMessage = FlightModeSwitchEnabled ? "正在开启飞行模式并确认模组状态..." : "正在关闭飞行模式并确认模组状态...";
-                    var flightApplied = await _kernelService.SetFlightModeAsync(FlightModeSwitchEnabled, slot.Id);
-                    if (!flightApplied || slot.IsFlightMode != FlightModeSwitchEnabled)
-                    {
-                        // Keep the UI and future per-SIM restoration policy in
-                        // sync with the actual modem state.  Setting this flag
-                        // suppresses a second apply operation from the binding.
-                        _isLoadingSimSwitches = true;
-                        FlightModeSwitchEnabled = slot.IsFlightMode;
-                        _isLoadingSimSwitches = false;
-                        StatusMessage = "飞行模式切换未获模组确认，开关已恢复为实际状态。";
-                        return;
-                    }
-                }
-
-                if (!slot.IsPcscReader && !FlightModeSwitchEnabled)
-                {
-                    var roamingApplied = await slot.SetDataRoamingEnabledAsync(DataRoamingSwitchEnabled);
-                    var cellularDataApplied = await slot.SetCellularDataEnabledAsync(CellularDataSwitchEnabled);
-                    if (!roamingApplied || !cellularDataApplied)
-                    {
-                        StatusMessage = "飞行模式已切换，但部分蜂窝数据/漫游设置未获模组确认。";
-                        return;
-                    }
-                    await slot.RefreshMetricsAsync();
-                }
-
-                if (VoWifiSwitchEnabled)
-                {
-                    if (slot.VoWifi.State == VoWifiState.Disconnected)
-                    {
-                        if (!await _kernelService.StartVoWifiAsync(slot.Id))
-                        {
-                            StatusMessage = "开关已应用，但 VoWiFi 未能启动；请导出本次诊断日志。";
-                            return;
-                        }
-                    }
-                }
-                else if (slot.VoWifi.State != VoWifiState.Disconnected)
-                {
-                    if (!await _kernelService.StopVoWifiAsync(slot.Id))
-                    {
-                        StatusMessage = "开关已应用，但 VoWiFi 未能正常停止。";
-                        return;
-                    }
-                }
-
-                // Save only after the hardware actions above are confirmed.
-                // A toggle always writes the complete four-switch policy while
-                // keeping unrelated SIM metadata such as nickname and proxy.
-                var existing = await _kernelService.Preferences.GetSimPreferenceAsync(iccid);
-                await _kernelService.SaveSimPreferencesAsync(
-                    iccid,
+                var applied = await _kernelService.ApplySimSwitchesAsync(
+                    slot.Id,
                     FlightModeSwitchEnabled,
                     VoWifiSwitchEnabled,
                     CellularDataSwitchEnabled,
-                    DataRoamingSwitchEnabled,
-                    existing?.DedicatedProxyUrl,
-                    existing?.CardNickname);
-
-                StatusMessage = "已保存并应用此 SIM 卡的开关。";
+                    DataRoamingSwitchEnabled);
+                if (!applied)
+                {
+                    await LoadSimSwitchesAsync(slot);
+                    StatusMessage = "开关未获模组确认，已恢复为实际状态。";
+                    return;
+                }
+                await LoadSimSwitchesAsync(slot);
+                StatusMessage = "已应用开关并读取模组实际状态。";
                 NotifyAll();
             }
             catch (Exception ex)

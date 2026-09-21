@@ -37,9 +37,10 @@ namespace VoWin.ViewModels.Pages
         public static Brush TokenDangerBg => ThemeBrushes.Get("AppDangerSoftBrush", Color.FromRgb(0xFF, 0xF0, 0xF3));
         public static Brush TokenMuted => ThemeBrushes.Muted;
         public static Brush TokenMutedBg => ThemeBrushes.Get("AppInputBrush", Color.FromRgb(0xF8, 0xFB, 0xFF));
-        private CancellationTokenSource? _flightModeChangeCts;
+        private CancellationTokenSource? _moduleSwitchChangeCts;
         private bool _isLoadingPreferences;
         private int _preferenceLoadVersion;
+        private ModemSlot? _observedSlot;
 
         public ModemManagerViewModel ViewModel => this;
         public ObservableCollection<ModemSlot> Slots => _kernelService.Slots;
@@ -197,52 +198,52 @@ namespace VoWin.ViewModels.Pages
         [ObservableProperty]
         private bool _moduleFlightMode;
 
-        partial void OnModuleFlightModeChanged(bool value)
+        partial void OnModuleFlightModeChanged(bool value) => QueueApplyModuleSwitches();
+        partial void OnModuleVoWifiChanged(bool value) => QueueApplyModuleSwitches();
+        partial void OnModuleCellularDataChanged(bool value) => QueueApplyModuleSwitches();
+        partial void OnModuleDataRoamingChanged(bool value) => QueueApplyModuleSwitches();
+
+        private void QueueApplyModuleSwitches()
         {
-            var slot = SelectedSlot;
-            if (!_isLoadingPreferences && slot != null && slot.IsFlightMode != value)
-            {
-                _flightModeChangeCts?.Cancel();
-                _flightModeChangeCts = new CancellationTokenSource();
-                _ = ApplyFlightModeAsync(slot, value, _flightModeChangeCts.Token);
-            }
+            if (_isLoadingPreferences || SelectedSlot == null) return;
+            _moduleSwitchChangeCts?.Cancel();
+            _moduleSwitchChangeCts = new CancellationTokenSource();
+            _ = ApplyModuleSwitchesAsync(_moduleSwitchChangeCts.Token);
         }
 
-        private async Task ApplyFlightModeAsync(ModemSlot slot, bool enabled, CancellationToken token)
+        private async Task ApplyModuleSwitchesAsync(CancellationToken token)
         {
+            var slot = SelectedSlot;
+            if (slot == null) return;
             try
             {
-                StatusMessage = enabled
-                    ? $"正在将卡槽 [{slot.Name}] 切换为飞行模式..."
-                    : $"正在将卡槽 [{slot.Name}] 退出飞行模式...";
-                var applied = await slot.SetFlightModeAsync(enabled);
+                await Task.Delay(120, token);
+                StatusMessage = "正在按顺序应用并确认模组开关…";
+                var applied = await _kernelService.ApplySimSwitchesAsync(
+                    slot.Id,
+                    ModuleFlightMode,
+                    ModuleVoWifi,
+                    ModuleCellularData,
+                    ModuleDataRoaming,
+                    token);
                 token.ThrowIfCancellationRequested();
-                if (!applied || slot.IsFlightMode != enabled)
+                if (!applied)
                 {
-                    _isLoadingPreferences = true;
-                    ModuleFlightMode = slot.IsFlightMode;
-                    _isLoadingPreferences = false;
-                    StatusMessage = "飞行模式切换未获模组确认，开关已恢复为实际状态。";
+                    await LoadPreferencesForSlotAsync(slot);
+                    StatusMessage = "开关未获模组确认，已恢复为实际状态。";
                     return;
                 }
-
-                await PersistCurrentSimSwitchesAsync(slot);
-                StatusMessage = enabled
-                    ? $"[{slot.Name}] 已进入飞行模式。"
-                    : $"[{slot.Name}] 已退出飞行模式并刷新网络。";
+                await LoadPreferencesForSlotAsync(slot);
+                StatusMessage = "模组开关已应用，并已读取实际状态。";
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
             }
             catch (Exception ex)
             {
-                StatusMessage = $"切换飞行模式失败: {ex.Message}";
+                StatusMessage = $"应用模组开关失败: {ex.Message}";
                 if (ReferenceEquals(SelectedSlot, slot))
-                {
-                    _isLoadingPreferences = true;
-                    ModuleFlightMode = slot.IsFlightMode;
-                    _isLoadingPreferences = false;
-                }
+                    await LoadPreferencesForSlotAsync(slot);
             }
         }
 
@@ -333,16 +334,13 @@ namespace VoWin.ViewModels.Pages
             _kernelService.Kernel.FlightModeChanged += (s, e) =>
             {
                 RefreshSummaryProperties();
+                if (string.IsNullOrWhiteSpace(e.SlotId)) return;
                 App.Current?.Dispatcher.BeginInvoke(new Action(() =>
                 {
                     var slot = Slots.FirstOrDefault(candidate =>
-                        string.IsNullOrWhiteSpace(e.SlotId) ||
                         string.Equals(candidate.Id, e.SlotId, StringComparison.OrdinalIgnoreCase));
                     if (slot == null || !ReferenceEquals(SelectedSlot, slot)) return;
-
-                    _isLoadingPreferences = true;
-                    ModuleFlightMode = slot.IsFlightMode;
-                    _isLoadingPreferences = false;
+                    SyncLiveSwitchProperties(slot);
                 }), System.Windows.Threading.DispatcherPriority.DataBind);
             };
         }
@@ -515,6 +513,12 @@ namespace VoWin.ViewModels.Pages
 
         partial void OnSelectedSlotChanged(ModemSlot? value)
         {
+            if (_observedSlot != null)
+                _observedSlot.PropertyChanged -= OnObservedSlotPropertyChanged;
+            _observedSlot = value;
+            if (_observedSlot != null)
+                _observedSlot.PropertyChanged += OnObservedSlotPropertyChanged;
+
             if (value?.IsPcscReader == true && SelectedDeviceTabIndex is 3 or 4)
             {
                 SelectedDeviceTabIndex = 0;
@@ -553,6 +557,31 @@ namespace VoWin.ViewModels.Pages
             }
         }
 
+        private void OnObservedSlotPropertyChanged(object? sender, PropertyChangedEventArgs e)
+        {
+            if (sender is ModemSlot slot &&
+                e.PropertyName is nameof(ModemSlot.IsFlightMode) or nameof(ModemSlot.CellularDataEnabled) or nameof(ModemSlot.DataRoamingEnabled))
+            {
+                App.Current?.Dispatcher.BeginInvoke(new Action(() => SyncLiveSwitchProperties(slot)),
+                    System.Windows.Threading.DispatcherPriority.DataBind);
+            }
+        }
+
+        private void SyncLiveSwitchProperties(ModemSlot slot)
+        {
+            if (_isLoadingPreferences || !ReferenceEquals(SelectedSlot, slot)) return;
+            _isLoadingPreferences = true;
+            try
+            {
+                ModuleFlightMode = slot.IsPcscReader ? false : slot.IsFlightMode;
+                if (slot.CellularDataEnabled.HasValue)
+                    ModuleCellularData = slot.CellularDataEnabled.Value;
+                if (slot.DataRoamingEnabled.HasValue)
+                    ModuleDataRoaming = slot.DataRoamingEnabled.Value;
+            }
+            finally { _isLoadingPreferences = false; }
+        }
+
         private async Task LoadPreferencesForSlotAsync(ModemSlot slot)
         {
             var loadVersion = Interlocked.Increment(ref _preferenceLoadVersion);
@@ -577,26 +606,25 @@ namespace VoWin.ViewModels.Pages
                     slot.Name = modPref.CustomName.Trim();
                 }
 
-                var desiredFlightMode = !slot.IsPcscReader &&
-                    (simPref?.DefaultFlightMode ?? modPref?.DefaultFlightMode ?? slot.IsFlightMode);
-                if (!slot.IsPcscReader && slot.IsFlightMode != desiredFlightMode)
+                if (!slot.IsPcscReader)
                 {
                     try
                     {
-                        await slot.SetFlightModeAsync(desiredFlightMode);
+                        await slot.RefreshSwitchStatesAsync();
                     }
                     catch (Exception ex)
                     {
-                        PreferenceStatusMessage = $"恢复飞行模式失败: {ex.Message}";
+                        PreferenceStatusMessage = $"读取模组开关失败: {ex.Message}";
                     }
                 }
 
-                // The hardware value is authoritative. The SIM-scoped policy is
-                // used as the desired value only until the modem confirms it.
+                // Hardware is authoritative for the live view. A saved SIM
+                // policy is only a fallback when a modem does not expose a
+                // particular readback command.
                 ModuleFlightMode = slot.IsPcscReader ? false : slot.IsFlightMode;
-                ModuleVoWifi = simPref?.DefaultVoWifi ?? modPref?.DefaultVoWifi ?? false;
-                ModuleCellularData = simPref?.DefaultCellularData ?? modPref?.DefaultCellularData ?? false;
-                ModuleDataRoaming = simPref?.DefaultDataRoaming ?? modPref?.DefaultDataRoaming ?? false;
+                ModuleVoWifi = simPref?.DefaultVoWifi ?? slot.VoWifi.State != VoWifiState.Disconnected;
+                ModuleCellularData = slot.CellularDataEnabled ?? simPref?.DefaultCellularData ?? false;
+                ModuleDataRoaming = slot.DataRoamingEnabled ?? simPref?.DefaultDataRoaming ?? false;
 
                 if (simPref != null)
                 {
@@ -673,22 +701,6 @@ namespace VoWin.ViewModels.Pages
             }
         }
 
-        private async Task PersistCurrentSimSwitchesAsync(ModemSlot slot)
-        {
-            var iccid = slot.Sim?.Iccid;
-            if (string.IsNullOrWhiteSpace(iccid)) return;
-
-            var existing = await _kernelService.Preferences.GetSimPreferenceAsync(iccid);
-            await _kernelService.SaveSimPreferencesAsync(
-                iccid,
-                slot.IsFlightMode,
-                ModuleVoWifi,
-                ModuleCellularData,
-                ModuleDataRoaming,
-                existing?.DedicatedProxyUrl,
-                existing?.CardNickname);
-        }
-
         [RelayCommand]
         private async Task SaveSimPreferenceAsync()
         {
@@ -743,9 +755,16 @@ namespace VoWin.ViewModels.Pages
         {
             if (SelectedSlot == null) return;
             StatusMessage = $"正在将 [{SelectedSlot.Name}] 退出飞行模式...";
-            await SelectedSlot.SetFlightModeAsync(false);
-            ModuleFlightMode = false;
-            StatusMessage = $"[{SelectedSlot.Name}] 已退出飞行模式并唤醒 SIM 芯片。";
+            var applied = await _kernelService.ApplySimSwitchesAsync(
+                SelectedSlot.Id,
+                false,
+                ModuleVoWifi,
+                ModuleCellularData,
+                ModuleDataRoaming);
+            await LoadPreferencesForSlotAsync(SelectedSlot);
+            StatusMessage = applied
+                ? $"[{SelectedSlot.Name}] 已退出飞行模式并读取实际状态。"
+                : "退出飞行模式未获模组确认，开关已恢复为实际状态。";
         }
 
         [RelayCommand]
