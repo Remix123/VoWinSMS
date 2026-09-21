@@ -15,8 +15,9 @@
                 <ResourceDictionary Source="Themes/DesignSystem.xaml" />
             </ResourceDictionary.MergedDictionaries>
 
-            <!-- Alibaba PuHuiTi is embedded as Fonts/Alibaba.ttf. -->
-            <FontFamily x:Key="AppFontFamily">/VoWin;component/Fonts/#Alibaba PuHuiTi</FontFamily>
+            <!-- Use the Windows message font so Win11 font settings and native
+                 CJK fallback are respected instead of shipping a custom font. -->
+            <FontFamily x:Key="AppFontFamily">Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI, Microsoft YaHei</FontFamily>
 
             <!-- Brand-blue interaction defaults; App.ApplyBrandTheme refreshes
                  these values for light and dark themes at runtime. -->

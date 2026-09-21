@@ -26,9 +26,6 @@
     <Content Include="vowin.ico">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <!-- Keep the application font inside the assembly so single-file publishing
-         does not leave a separate font file beside VoWin.exe. -->
-    <Resource Include="..\Alibaba.ttf" Link="Fonts\Alibaba.ttf" />
   </ItemGroup>
 
   <ItemGroup>

@@ -88,6 +88,16 @@ namespace VoWin
         private CancellationTokenSource? _singleInstanceListenerCts;
         private Task? _singleInstanceListenerTask;
         private bool _ownsSingleInstanceMutex;
+
+        public App()
+        {
+            InitializeComponent();
+            // Resolve the alias to the user's current Windows UI font. The
+            // XAML value above remains a safe design-time fallback, while
+            // Windows 11 supplies the actual message font at runtime.
+            Resources["AppFontFamily"] = System.Windows.SystemFonts.MessageFontFamily;
+        }
+
         public static IServiceProvider Services
         {
             get { return _host.Services; }
