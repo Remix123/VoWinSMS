@@ -993,18 +993,21 @@ namespace VoWin.ViewModels.Pages
                 if (version != Volatile.Read(ref _simSwitchLoadVersion) || !ReferenceEquals(slot, SelectedSlot)) return;
 
                 _isLoadingSimSwitches = true;
-                // The modem is authoritative for the live view. Saved SIM
-                // values are fallbacks only when a firmware query is unknown.
+                // The switches show live state when available. While RF is off,
+                // cellular and roaming switches retain their saved intent so
+                // leaving flight mode can restore those independent settings.
                 VoWifiSwitchEnabled = slot.VoWifi.State != VoWifiState.Disconnected;
-                FlightModeSwitchEnabled = slot.IsPcscReader ? false : slot.IsFlightMode;
-                CellularDataSwitchEnabled = slot.CellularDataEnabled
-                    ?? saved?.DefaultCellularData
-                    ?? modulePreference?.DefaultCellularData
-                    ?? false;
-                DataRoamingSwitchEnabled = slot.DataRoamingEnabled
-                    ?? saved?.DefaultDataRoaming
-                    ?? modulePreference?.DefaultDataRoaming
-                    ?? false;
+                FlightModeSwitchEnabled = slot.IsPcscReader
+                    ? false
+                    : slot.IsFlightModeKnown
+                        ? slot.IsFlightMode
+                        : saved?.DefaultFlightMode ?? modulePreference?.DefaultFlightMode ?? false;
+                CellularDataSwitchEnabled = slot.IsFlightMode
+                    ? saved?.DefaultCellularData ?? modulePreference?.DefaultCellularData ?? slot.CellularDataEnabled ?? false
+                    : slot.CellularDataEnabled ?? saved?.DefaultCellularData ?? modulePreference?.DefaultCellularData ?? false;
+                DataRoamingSwitchEnabled = slot.IsFlightMode
+                    ? saved?.DefaultDataRoaming ?? modulePreference?.DefaultDataRoaming ?? slot.DataRoamingEnabled ?? false
+                    : slot.DataRoamingEnabled ?? saved?.DefaultDataRoaming ?? modulePreference?.DefaultDataRoaming ?? false;
             }
             catch (Exception ex)
             {

@@ -587,10 +587,13 @@ namespace VoWin.ViewModels.Pages
             _isLoadingPreferences = true;
             try
             {
-                ModuleFlightMode = slot.IsPcscReader ? false : slot.IsFlightMode;
-                if (slot.CellularDataEnabled.HasValue)
+                if (slot.IsPcscReader)
+                    ModuleFlightMode = false;
+                else if (slot.IsFlightModeKnown)
+                    ModuleFlightMode = slot.IsFlightMode;
+                if (slot.CellularDataEnabled.HasValue && !slot.IsFlightMode)
                     ModuleCellularData = slot.CellularDataEnabled.Value;
-                if (slot.DataRoamingEnabled.HasValue)
+                if (slot.DataRoamingEnabled.HasValue && !slot.IsFlightMode)
                     ModuleDataRoaming = slot.DataRoamingEnabled.Value;
             }
             finally { _isLoadingPreferences = false; }
@@ -632,21 +635,23 @@ namespace VoWin.ViewModels.Pages
                     }
                 }
 
-                // Hardware is authoritative for the live view. A saved SIM
-                // policy is only a fallback when a modem does not expose a
-                // particular readback command.
-                ModuleFlightMode = slot.IsPcscReader ? false : slot.IsFlightMode;
-                // Live state is authoritative for the switch panel. Persisted
-                // values are only used when the modem cannot provide a readback.
+                // Show confirmed live RF state. If the readback is unknown,
+                // fall back to SIM policy and then the module default.
+                ModuleFlightMode = slot.IsPcscReader
+                    ? false
+                    : slot.IsFlightModeKnown
+                        ? slot.IsFlightMode
+                        : simPref?.DefaultFlightMode ?? modPref?.DefaultFlightMode ?? false;
+                // VoWiFi switch tracks its live tunnel. Cellular controls show
+                // effective state while RF is on and preserve desired policy
+                // while flight mode temporarily makes them ineffective.
                 ModuleVoWifi = slot.VoWifi.State != VoWifiState.Disconnected;
-                ModuleCellularData = slot.CellularDataEnabled
-                    ?? simPref?.DefaultCellularData
-                    ?? modPref?.DefaultCellularData
-                    ?? false;
-                ModuleDataRoaming = slot.DataRoamingEnabled
-                    ?? simPref?.DefaultDataRoaming
-                    ?? modPref?.DefaultDataRoaming
-                    ?? false;
+                ModuleCellularData = slot.IsFlightMode
+                    ? simPref?.DefaultCellularData ?? modPref?.DefaultCellularData ?? slot.CellularDataEnabled ?? false
+                    : slot.CellularDataEnabled ?? simPref?.DefaultCellularData ?? modPref?.DefaultCellularData ?? false;
+                ModuleDataRoaming = slot.IsFlightMode
+                    ? simPref?.DefaultDataRoaming ?? modPref?.DefaultDataRoaming ?? slot.DataRoamingEnabled ?? false
+                    : slot.DataRoamingEnabled ?? simPref?.DefaultDataRoaming ?? modPref?.DefaultDataRoaming ?? false;
 
                 if (simPref != null)
                 {

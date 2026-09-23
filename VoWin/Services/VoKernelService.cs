@@ -1025,7 +1025,7 @@ namespace VoWin.Services
 
                 if (targetSlot?.Modem != null && targetSlot.Modem.IsOpen)
                 {
-                    var resp = await targetSlot.Modem.SendRawAtCommandAsync(trimmed, 5000);
+                    var resp = await targetSlot.ExecuteAtCommandAsync(trimmed, 5000).ConfigureAwait(false);
                     var output = resp.RawOutput ?? string.Join("\r\n", resp.Lines);
                     AddLog("INFO", "AT", $"<< {output}");
                     return output;
@@ -1145,6 +1145,7 @@ namespace VoWin.Services
             await applyGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
+                var allApplied = true;
                 if (slot.IsPcscReader)
                 {
                     flightMode = false;
@@ -1153,32 +1154,84 @@ namespace VoWin.Services
                 }
                 else
                 {
-                    if (slot.IsFlightMode != flightMode &&
+                    if ((!slot.IsFlightModeKnown || slot.IsFlightMode != flightMode) &&
                         !await slot.SetFlightModeAsync(flightMode, cancellationToken).ConfigureAwait(false))
-                        return false;
+                        allApplied = false;
 
                     // Keep the requested data/roaming policy in SQLite while
                     // flight mode is on, but only touch hardware controls when
                     // RF is actually available.
-                    if (!slot.IsFlightMode)
+                    if (slot.IsFlightModeKnown && !slot.IsFlightMode)
                     {
-                        if (!await slot.SetDataRoamingEnabledAsync(dataRoaming, cancellationToken).ConfigureAwait(false))
-                            return false;
-                        if (!await slot.SetCellularDataEnabledAsync(cellularData, cancellationToken).ConfigureAwait(false))
-                            return false;
+                        var existing = string.IsNullOrWhiteSpace(slot.Sim?.Iccid)
+                            ? null
+                            : await Preferences.GetSimPreferenceAsync(slot.Sim.Iccid).ConfigureAwait(false);
+                        var modulePreference = await Preferences.GetModulePreferenceAsync(slot.Id, slot.Imei).ConfigureAwait(false);
+                        var desiredRoaming = existing?.DefaultDataRoaming ?? modulePreference?.DefaultDataRoaming;
+                        var desiredCellularData = existing?.DefaultCellularData ?? modulePreference?.DefaultCellularData;
+
+                        // Avoid issuing unrelated controls on every aggregate
+                        // update. Readback wins when available; persisted
+                        // intent is the comparison source when firmware cannot
+                        // report a control state.
+                        var shouldApplyRoaming = slot.DataRoamingEnabled.HasValue
+                            ? slot.DataRoamingEnabled.Value != dataRoaming
+                            : desiredRoaming.HasValue
+                                ? desiredRoaming.Value != dataRoaming
+                                : dataRoaming;
+                        if (shouldApplyRoaming)
+                        {
+                            try
+                            {
+                                if (!await slot.SetDataRoamingEnabledAsync(dataRoaming, cancellationToken).ConfigureAwait(false))
+                                    allApplied = false;
+                            }
+                            catch (Exception ex) when (ex is not OperationCanceledException)
+                            {
+                                allApplied = false;
+                                AddLog("WARN", "Modem", $"漫游开关应用失败，但继续处理其他独立开关: {ex.Message}");
+                            }
+                        }
+
+                        var shouldApplyCellularData = slot.CellularDataEnabled.HasValue
+                            ? slot.CellularDataEnabled.Value != cellularData
+                            : desiredCellularData.HasValue
+                                ? desiredCellularData.Value != cellularData
+                                : cellularData;
+                        if (shouldApplyCellularData)
+                        {
+                            try
+                            {
+                                if (!await slot.SetCellularDataEnabledAsync(cellularData, cancellationToken).ConfigureAwait(false))
+                                    allApplied = false;
+                            }
+                            catch (Exception ex) when (ex is not OperationCanceledException)
+                            {
+                                allApplied = false;
+                                AddLog("WARN", "Modem", $"蜂窝数据开关应用失败，但继续处理其他独立开关: {ex.Message}");
+                            }
+                        }
                     }
                 }
 
-                if (voWifi)
+                try
                 {
-                    if (slot.VoWifi.State == VoWifiState.Disconnected &&
-                        !await StartVoWifiForSlotAsync(slot, restorePreferences: false).ConfigureAwait(false))
-                        return false;
+                    if (voWifi)
+                    {
+                        if (slot.VoWifi.State == VoWifiState.Disconnected &&
+                            !await StartVoWifiForSlotAsync(slot, restorePreferences: false).ConfigureAwait(false))
+                            allApplied = false;
+                    }
+                    else if (slot.VoWifi.State != VoWifiState.Disconnected &&
+                             !await Kernel.StopVoWifiAsync(slot.Id).ConfigureAwait(false))
+                    {
+                        allApplied = false;
+                    }
                 }
-                else if (slot.VoWifi.State != VoWifiState.Disconnected &&
-                         !await Kernel.StopVoWifiAsync(slot.Id).ConfigureAwait(false))
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    return false;
+                    allApplied = false;
+                    AddLog("WARN", "VoWiFi", $"VoWiFi 独立开关应用失败；其他开关结果仍保留: {ex.Message}");
                 }
 
                 var iccid = slot.Sim?.Iccid;
@@ -1194,7 +1247,7 @@ namespace VoWin.Services
                         existing?.DedicatedProxyUrl,
                         existing?.CardNickname).ConfigureAwait(false);
                 }
-                return true;
+                return allApplied;
             }
             finally
             {
@@ -2282,7 +2335,8 @@ namespace VoWin.Services
                 // If no SIM preference exists, keep the hardware state instead
                 // of manufacturing a false value during startup reconciliation.
                 bool? preferredFlightMode = simPref?.DefaultFlightMode ?? modPref?.DefaultFlightMode;
-                if (!slot.IsPcscReader && preferredFlightMode.HasValue && slot.IsFlightMode != preferredFlightMode.Value)
+                if (!slot.IsPcscReader && preferredFlightMode.HasValue &&
+                    (!slot.IsFlightModeKnown || slot.IsFlightMode != preferredFlightMode.Value))
                 {
                     try
                     {
@@ -2304,7 +2358,7 @@ namespace VoWin.Services
                     }
                 }
 
-                if (!slot.IsPcscReader && !slot.IsFlightMode && (simPref != null || modPref != null))
+                if (!slot.IsPcscReader && slot.IsFlightModeKnown && !slot.IsFlightMode && (simPref != null || modPref != null))
                 {
                     bool? preferredRoaming = simPref?.DefaultDataRoaming ?? modPref?.DefaultDataRoaming;
                     if (preferredRoaming.HasValue)

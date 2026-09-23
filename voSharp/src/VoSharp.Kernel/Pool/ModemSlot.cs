@@ -445,6 +445,8 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
         }
     }
 
+    // Observed modem-side packet attachment (AT+CGATT?), not the saved user
+    // preference that should be restored after flight mode is disabled.
     private bool? _cellularDataEnabled;
     public bool? CellularDataEnabled
     {
@@ -457,6 +459,7 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
         }
     }
 
+    // Observed modem roaming policy. The desired preference is stored by SIM.
     private bool? _dataRoamingEnabled;
     public bool? DataRoamingEnabled
     {
@@ -1031,6 +1034,30 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
         finally { _switchControlGate.Release(); }
     }
 
+    /// <summary>
+    /// Runs a terminal command through the same per-slot gate as switch
+    /// controls and refreshes the affected live state before returning.
+    /// </summary>
+    public async Task<AtResponse> ExecuteAtCommandAsync(string command, int timeoutMs = 5000, CancellationToken ct = default)
+    {
+        await _switchControlGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (Modem == null || !Modem.IsOpen)
+                throw new InvalidOperationException("Modem is not connected.");
+
+            var response = await Modem.SendRawAtCommandAsync(command, timeoutMs, ct).ConfigureAwait(false);
+            if (response.Success && System.Text.RegularExpressions.Regex.IsMatch(
+                    command.Trim(), @"^AT\+(?:CFUN|CGATT|QCFG|QNWCFG)(?:\?|=)",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+            {
+                await RefreshMetricsCoreAsync(ct).ConfigureAwait(false);
+            }
+            return response;
+        }
+        finally { _switchControlGate.Release(); }
+    }
+
     private async Task RefreshMetricsCoreAsync(CancellationToken ct)
     {
         if (IsPcscReader)
@@ -1077,6 +1104,13 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
     /// Refreshes SIM identity (e.g. after profile or slot switch) by querying IMSI and ICCID.
     /// </summary>
     public async Task RefreshSimAsync(CancellationToken ct = default)
+    {
+        await _switchControlGate.WaitAsync(ct).ConfigureAwait(false);
+        try { await RefreshSimCoreAsync(ct).ConfigureAwait(false); }
+        finally { _switchControlGate.Release(); }
+    }
+
+    private async Task RefreshSimCoreAsync(CancellationToken ct)
     {
         if (IsPcscReader)
         {
@@ -1631,13 +1665,15 @@ public class ModemSlot : IAsyncDisposable, INotifyPropertyChanged
             if (IsFlightMode != enabled) return false;
             if (enabled)
             {
+                // These are effective hardware states while RF is disabled.
+                // The per-SIM desired policies remain persisted separately.
                 CellularDataEnabled = false;
                 DataRoamingEnabled = false;
                 ClearRadioMetrics();
             }
             else
             {
-                await RefreshSimAsync(ct).ConfigureAwait(false);
+                await RefreshSimCoreAsync(ct).ConfigureAwait(false);
                 await RefreshMetricsCoreAsync(ct).ConfigureAwait(false);
             }
             return true;
