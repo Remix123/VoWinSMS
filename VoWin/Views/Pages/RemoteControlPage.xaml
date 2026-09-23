@@ -35,7 +35,7 @@
                  Command="{Binding ViewModel.SaveCommand}" />
     </Grid>
 
-    <ScrollViewer x:Name="RemoteScrollViewer" Grid.Row="1" HorizontalContentAlignment="Stretch" VerticalScrollBarVisibility="Auto">
+    <ScrollViewer x:Name="RemoteScrollViewer" Grid.Row="1" HorizontalContentAlignment="Stretch" VerticalScrollBarVisibility="Auto" Padding="0,0,12,0">
       <StackPanel MaxWidth="960" HorizontalAlignment="Center">
         <Grid>
           <Grid.ColumnDefinitions>

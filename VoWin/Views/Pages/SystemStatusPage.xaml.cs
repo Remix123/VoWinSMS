@@ -24,6 +24,7 @@ namespace VoWin.Views.Pages
 
             Loaded += OnPageLoaded;
             Unloaded += OnPageUnloaded;
+            IsVisibleChanged += OnPageVisibilityChanged;
             viewModel.PropertyChanged += OnViewModelPropertyChanged;
         }
 
@@ -31,6 +32,19 @@ namespace VoWin.Views.Pages
         {
             DisableAncestorScrollViewers();
             HookLogAutoScroll();
+            ScrollPageToTopAfterLayout();
+        }
+
+        private void OnPageVisibilityChanged(object sender, DependencyPropertyChangedEventArgs e)
+        {
+            if (e.NewValue is true)
+            {
+                ScrollPageToTopAfterLayout();
+            }
+        }
+
+        private void ScrollPageToTopAfterLayout()
+        {
             Dispatcher.BeginInvoke(new Action(() => PageScrollViewer.ScrollToTop()), DispatcherPriority.Loaded);
         }
 
@@ -148,17 +162,6 @@ namespace VoWin.Views.Pages
                 sv.ScrollToEnd();
             }
 
-            try
-            {
-                if (LogList.Items.Count > 0)
-                {
-                    LogList.ScrollIntoView(LogList.Items[^1]);
-                }
-            }
-            catch
-            {
-                // Ignore collection shift race condition during high-rate drain
-            }
         }
 
         private ScrollViewer? FindLogScrollViewer()

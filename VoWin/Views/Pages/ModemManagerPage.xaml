@@ -213,7 +213,7 @@
             SelectionMode="Single"
             BorderThickness="0"
             Background="Transparent"
-            Padding="6"
+            Padding="6,6,18,6"
             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
             ScrollViewer.CanContentScroll="True"
             VirtualizingPanel.IsVirtualizing="True"
@@ -500,7 +500,7 @@
 
               <!-- ================= TAB 1: 概览 (3 Health Summary Cards) ================= -->
               <TabItem Header="概览">
-                <ScrollViewer Margin="0,10,0,0" VerticalScrollBarVisibility="Auto">
+                <ScrollViewer Margin="0,10,0,0" Padding="0,0,12,0" VerticalScrollBarVisibility="Auto">
                   <StackPanel>
 
 
@@ -750,7 +750,7 @@
 
               <!-- ================= TAB 2: IMS / VoWiFi (4-Stage Chain & Key-Value Matrix) ================= -->
               <TabItem Header="IMS / VoWiFi" Width="auto">
-                <ScrollViewer Margin="0,10,0,0" VerticalScrollBarVisibility="Auto">
+                <ScrollViewer Margin="0,10,0,0" Padding="0,0,12,0" VerticalScrollBarVisibility="Auto">
                   <StackPanel>
 
                     <!-- Four Stage Checklist Pills (Unified Semantic Colors) -->
@@ -1092,7 +1092,7 @@
                               Visibility="{Binding HasEuiccDownloadActivity, Converter={StaticResource BoolToVis}}">
                         <StackPanel>
                           <TextBlock Text="写卡过程" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,5" />
-                          <ScrollViewer MaxHeight="105" VerticalScrollBarVisibility="Auto">
+                          <ScrollViewer MaxHeight="105" Padding="0,0,12,0" VerticalScrollBarVisibility="Auto">
                             <ItemsControl ItemsSource="{Binding EuiccDownloadLog}">
                               <ItemsControl.ItemTemplate>
                                 <DataTemplate>
@@ -1127,7 +1127,7 @@
                     </TabItem>
 
                     <TabItem Header="已安装的配置文件">
-                      <ScrollViewer Margin="0,10,0,0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" PanningMode="VerticalOnly">
+                      <ScrollViewer Margin="0,10,0,0" Padding="0,0,12,0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" PanningMode="VerticalOnly">
                         <StackPanel>
                         <Border Background="{DynamicResource AppInputBrush}" BorderBrush="{DynamicResource AppCardBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,0,0,8">
                           <Grid>
@@ -1233,7 +1233,7 @@
 
                   <!-- Terminal Log Screen -->
                   <Border Grid.Row="1" Background="{DynamicResource AppInputBrush}" BorderBrush="{DynamicResource AppCardBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,10" Padding="8">
-                    <ListBox ItemsSource="{Binding AtLogEntries}" FontFamily="{DynamicResource AppFontFamily}" FontSize="12" Background="Transparent" Foreground="{DynamicResource AppTextPrimaryBrush}" BorderThickness="0" ScrollViewer.VerticalScrollBarVisibility="Visible" ScrollViewer.CanContentScroll="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" />
+                    <ListBox ItemsSource="{Binding AtLogEntries}" FontFamily="{DynamicResource AppFontFamily}" FontSize="12" Background="Transparent" Foreground="{DynamicResource AppTextPrimaryBrush}" BorderThickness="0" Padding="0,0,12,0" ScrollViewer.VerticalScrollBarVisibility="Visible" ScrollViewer.CanContentScroll="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" />
                   </Border>
 
                   <!-- Command Input Bar -->
@@ -1276,7 +1276,7 @@
 
                   <!-- USSD Log Screen -->
                   <Border Grid.Row="1" Background="{DynamicResource AppInputBrush}" BorderBrush="{DynamicResource AppCardBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,10" Padding="8">
-                    <ListBox ItemsSource="{Binding UssdLogEntries}" FontFamily="{DynamicResource AppFontFamily}" FontSize="12" Background="Transparent" Foreground="{DynamicResource AppTextPrimaryBrush}" BorderThickness="0" ScrollViewer.VerticalScrollBarVisibility="Visible" ScrollViewer.CanContentScroll="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" />
+                    <ListBox ItemsSource="{Binding UssdLogEntries}" FontFamily="{DynamicResource AppFontFamily}" FontSize="12" Background="Transparent" Foreground="{DynamicResource AppTextPrimaryBrush}" BorderThickness="0" Padding="0,0,12,0" ScrollViewer.VerticalScrollBarVisibility="Visible" ScrollViewer.CanContentScroll="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" />
                   </Border>
 
                   <!-- USSD Input Bar -->
@@ -1301,7 +1301,7 @@
 
               <!-- ================= TAB 6: 卡槽资料 ================= -->
               <TabItem Header="卡槽资料">
-                <ScrollViewer Margin="0,10,0,0" VerticalScrollBarVisibility="Auto">
+                <ScrollViewer Margin="0,10,0,0" Padding="0,0,12,0" VerticalScrollBarVisibility="Auto">
                   <StackPanel>
                     <TextBlock FontSize="13" FontWeight="SemiBold" Text="硬件与 SIM 卡资料（VoWiFi、飞行模式、漫游和数据开关请在首页“开关”中操作）" Margin="0,0,0,12" />
 

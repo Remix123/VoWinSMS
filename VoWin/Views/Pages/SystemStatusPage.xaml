@@ -43,7 +43,7 @@
         <ui:Button Appearance="Secondary" Command="{Binding RefreshMetricsCommand}" Icon="{ui:SymbolIcon Symbol=ArrowSync24}" Content="刷新状态" />
       </StackPanel>
     </Grid>
-    <ScrollViewer x:Name="PageScrollViewer" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+    <ScrollViewer x:Name="PageScrollViewer" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,12,0">
       <StackPanel>
         <Border Margin="0,0,0,14" Padding="18,16" Background="{DynamicResource AppCardBrush}" BorderBrush="{DynamicResource AppCardBorderBrush}" BorderThickness="1" CornerRadius="12">
           <StackPanel>
@@ -114,7 +114,7 @@
                 </Grid>
                 <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,6"><ui:Button Content="全部" Command="{Binding SetLogModuleCommand}" CommandParameter="全部" Style="{StaticResource LogFilterButtonStyle}" /><ui:Button Content="Modem" Command="{Binding SetLogModuleCommand}" CommandParameter="Modem" Style="{StaticResource LogFilterButtonStyle}" /><ui:Button Content="VoWiFi" Command="{Binding SetLogModuleCommand}" CommandParameter="VoWiFi" Style="{StaticResource LogFilterButtonStyle}" /><ui:Button Content="IMS" Command="{Binding SetLogModuleCommand}" CommandParameter="IMS" Style="{StaticResource LogFilterButtonStyle}" /><ui:Button Content="SIP" Command="{Binding SetLogModuleCommand}" CommandParameter="SIP" Style="{StaticResource LogFilterButtonStyle}" /></StackPanel>
                 <ui:TextBox Grid.Row="2" Margin="0,0,0,8" Padding="8,3" FontSize="11" PlaceholderText="搜索日志内容..." Text="{Binding LogSearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" ClearButtonEnabled="True" />
-                <ListBox x:Name="LogList" Grid.Row="3" ItemsSource="{Binding FilteredLogs}" Background="Transparent" BorderThickness="0" ScrollViewer.VerticalScrollBarVisibility="Visible" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.CanContentScroll="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" VirtualizingPanel.ScrollUnit="Pixel" Focusable="False">
+                <ListBox x:Name="LogList" Grid.Row="3" ItemsSource="{Binding FilteredLogs}" Background="Transparent" BorderThickness="0" Padding="0,0,12,0" ScrollViewer.VerticalScrollBarVisibility="Visible" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.CanContentScroll="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" VirtualizingPanel.ScrollUnit="Pixel" Focusable="False">
                   <ListBox.ItemContainerStyle><Style TargetType="ListBoxItem"><Setter Property="Padding" Value="0" /><Setter Property="Margin" Value="0,0,0,4" /><Setter Property="HorizontalContentAlignment" Value="Stretch" /><Setter Property="Focusable" Value="False" /></Style></ListBox.ItemContainerStyle>
                   <ListBox.ItemTemplate>
                     <DataTemplate>

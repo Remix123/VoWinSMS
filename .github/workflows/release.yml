@@ -1,7 +1,7 @@
 name: Build and release VoWin
 
 on:
-  # Every push to the main branch is compiled and packaged as an Actions artifact.
+  # Every push to the main branch is built and published as a prerelease.
   push:
     branches:
       - main
@@ -82,16 +82,21 @@ jobs:
             --property:Version=$env:VERSION `
             --output publish/win-x64
 
-      - name: Create release archive and checksum
+      - name: Prepare executable and checksum
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force artifacts | Out-Null
-          $archive = "artifacts/VoWin-$env:TAG-win-x64.zip"
-          Compress-Archive -Path 'publish/win-x64/*' -DestinationPath $archive -CompressionLevel Optimal
-          $hash = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
-          "$hash  $(Split-Path -Leaf $archive)" | Set-Content -NoNewline "${archive}.sha256"
-          "ARCHIVE=$archive" >> $env:GITHUB_ENV
-          "CHECKSUM=${archive}.sha256" >> $env:GITHUB_ENV
+          $publishedExe = 'publish/win-x64/VoWin.exe'
+          if (-not (Test-Path $publishedExe)) {
+            throw "Published executable not found: $publishedExe"
+          }
+          $exe = "artifacts/VoWin-$env:TAG-win-x64.exe"
+          Copy-Item $publishedExe $exe
+          $hash = (Get-FileHash -Algorithm SHA256 $exe).Hash.ToLowerInvariant()
+          $checksum = "${exe}.sha256"
+          "$hash  $(Split-Path -Leaf $exe)" | Set-Content -NoNewline $checksum
+          "EXE=$exe" >> $env:GITHUB_ENV
+          "CHECKSUM=$checksum" >> $env:GITHUB_ENV
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -102,15 +107,15 @@ jobs:
           retention-days: 30
 
       - name: Create GitHub Release
-        if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+        if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          PRERELEASE: ${{ inputs.prerelease || 'false' }}
+          PRERELEASE: ${{ github.ref == 'refs/heads/main' && 'true' || inputs.prerelease || 'false' }}
         run: |
           $arguments = @(
             'release', 'create', $env:TAG,
-            $env:ARCHIVE, $env:CHECKSUM,
+            $env:EXE, $env:CHECKSUM,
             '--title', "VoWin $env:TAG",
             '--generate-notes'
           )
